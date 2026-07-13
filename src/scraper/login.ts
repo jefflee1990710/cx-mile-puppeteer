@@ -9,6 +9,7 @@ import {
   fillPasswordValue,
   hasVisiblePasswordField,
 } from './loginPageFns.js';
+import { pageEval } from './pageEval.js';
 
 export interface CxCreds {
   countryCode: string;
@@ -26,12 +27,12 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
 
   let step: 'mobile' | 'password' | null = null;
   for (let i = 0; i < 20 && !step; i++) {
-    const detected = await page.evaluate(detectLoginStep);
+    const detected = await pageEval(page, detectLoginStep);
     if (detected === 'mobile' || detected === 'password') {
       step = detected;
       break;
     }
-    if ((await page.evaluate(detectLoginProblem)) === true) {
+    if ((await pageEval(page, detectLoginProblem)) === true) {
       cxlog('login: CAPTCHA or error banner before form ready');
       return 'failed';
     }
@@ -43,7 +44,7 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
   }
 
   if (step === 'mobile') {
-    const filled = (await page.evaluate(fillMobileNumber, creds.countryCode, creds.mobile)) === true;
+    const filled = (await pageEval(page, fillMobileNumber, creds.countryCode, creds.mobile)) === true;
     if (!filled) {
       cxlog('login: could not fill the mobile number');
       return 'failed';
@@ -52,7 +53,7 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
 
     let continued = false;
     for (let i = 0; i < 8 && !continued; i++) {
-      continued = (await page.evaluate(clickMobileContinue)) === true;
+      continued = (await pageEval(page, clickMobileContinue)) === true;
       if (!continued) await sleep(400);
     }
     if (!continued) {
@@ -63,11 +64,11 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     let hasPw = false;
     for (let i = 0; i < 30 && !hasPw; i++) {
       await sleep(500);
-      if ((await page.evaluate(detectLoginProblem)) === true) {
+      if ((await pageEval(page, detectLoginProblem)) === true) {
         cxlog('login: real CAPTCHA challenge or error banner at step 1');
         return 'failed';
       }
-      hasPw = (await page.evaluate(hasVisiblePasswordField)) === true;
+      hasPw = (await pageEval(page, hasVisiblePasswordField)) === true;
     }
     if (!hasPw) {
       cxlog('login: password field never appeared');
@@ -77,7 +78,7 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
 
   let pwFilled = false;
   for (let i = 0; i < 8 && !pwFilled; i++) {
-    pwFilled = (await page.evaluate(fillPasswordValue, creds.password)) === true;
+    pwFilled = (await pageEval(page, fillPasswordValue, creds.password)) === true;
     if (!pwFilled) await sleep(400);
   }
   if (!pwFilled) {
@@ -88,7 +89,7 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
 
   let signedInClick = false;
   for (let i = 0; i < 8 && !signedInClick; i++) {
-    signedInClick = (await page.evaluate(clickPasswordSignIn)) === true;
+    signedInClick = (await pageEval(page, clickPasswordSignIn)) === true;
     if (!signedInClick) await sleep(400);
   }
   if (!signedInClick) {
@@ -109,9 +110,14 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
       cxlog('login: signed in, left the sign-in page');
       return 'ok';
     }
-    if ((await page.evaluate(detectLoginProblem)) === true) {
-      cxlog('login: CAPTCHA challenge or error banner after submit');
-      return 'failed';
+    try {
+      if ((await pageEval(page, detectLoginProblem)) === true) {
+        cxlog('login: CAPTCHA challenge or error banner after submit');
+        return 'failed';
+      }
+    } catch (e) {
+      // Mid-navigation documents can throw; keep polling until URL leaves sign-in.
+      cxlog('login: post-submit poll skipped', String(e));
     }
   }
   cxlog('login: timed out still on the sign-in page');

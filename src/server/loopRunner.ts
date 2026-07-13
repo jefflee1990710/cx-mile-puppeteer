@@ -106,10 +106,14 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
 }
 
 export async function stopLoop(): Promise<void> {
-  if (!running) return;
+  if (!running) {
+    await closeBrowser();
+    return;
+  }
   stopFlag = true;
   emitLog('Stop requested');
   if (loopPromise) await loopPromise.catch(() => undefined);
+  await closeBrowser();
 }
 
 export async function shutdown(): Promise<void> {

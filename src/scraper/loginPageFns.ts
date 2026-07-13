@@ -269,6 +269,8 @@ export function clickPasswordSignIn(): boolean {
 }
 
 export function detectLoginProblem(): boolean {
+  if (!document.body) return false;
+
   const challenge = Array.from(
     document.querySelectorAll<HTMLIFrameElement>(
       'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[title*="recaptcha" i]',
@@ -280,6 +282,7 @@ export function detectLoginProblem(): boolean {
   if (challenge) return true;
 
   const root = document.querySelector('.masterSignIn') ?? document.body;
+  if (!root) return false;
   const alerts = Array.from(
     root.querySelectorAll<HTMLElement>('[role="alert"], .textfield__error, [class*="errorMessage" i]'),
   );

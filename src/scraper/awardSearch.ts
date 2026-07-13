@@ -11,6 +11,7 @@ import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
 import { cxlog } from './log.js';
 import type { OpenSearchOutcome } from './loop.js';
+import { pageEval } from './pageEval.js';
 import type { Combo, CxResult, FlightSlot } from './types.js';
 import { REDEEM_PAGE_URL } from './types.js';
 
@@ -29,9 +30,7 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
   const url = buildAwardSearchUrl(combo);
   cxlog('openAwardSearch navigate', url);
   try {
-    await page.evaluate(() => {
-      (window as Window & { __cxStalePage?: boolean }).__cxStalePage = true;
-    });
+    await page.evaluate(`(() => { window.__cxStalePage = true; })()`);
   } catch {
     // ignore
   }
@@ -55,7 +54,7 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
       return 'rejected';
     }
     if (/\/availability/i.test(path)) {
-      const stale = await page.evaluate(() => (window as Window & { __cxStalePage?: boolean }).__cxStalePage === true);
+      const stale = await page.evaluate(`(() => window.__cxStalePage === true)()`);
       if (stale) continue;
       const state = await waitForResults(page);
       if (state === 'noflights') {
@@ -72,7 +71,7 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
 async function waitForResults(page: Page): Promise<'cells' | 'noflights' | 'pending'> {
   for (let i = 0; i < 20; i++) {
     try {
-      const state = await page.evaluate(checkCxResultsState);
+      const state = await pageEval(page, checkCxResultsState);
       if (state === 'cells' || state === 'noflights') return state;
     } catch {
       // mid-nav
@@ -84,10 +83,10 @@ async function waitForResults(page: Page): Promise<'cells' | 'noflights' | 'pend
 
 export async function readAwardResults(page: Page, combo: Combo): Promise<CxResult> {
   try {
-    const scrape = (await page.evaluate(scrapeCxAvailability)) ?? { depart: [], ret: [] };
+    const scrape = (await pageEval(page, scrapeCxAvailability)) ?? { depart: [], ret: [] };
 
     if (scrape.depart.length === 0) {
-      const probe = await page.evaluate(grabAwaiGlobals);
+      const probe = await pageEval(page, grabAwaiGlobals);
       if (probe?.isAwai) {
         cxlog('award layout: AWAI — reading pageBom bootstrap');
         const { scrape: awaiScrape, flights } = parseAwaiBootstrap(probe, combo);
@@ -112,7 +111,7 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
 
     let initial: FlightSlot[] = [];
     for (let i = 0; i < 10; i++) {
-      initial = (await page.evaluate(scrapeCxFlightCards)) ?? [];
+      initial = (await pageEval(page, scrapeCxFlightCards)) ?? [];
       if (initial.length > 0 && initial.every(s => s.miles != null)) break;
       await sleep(500);
     }
@@ -163,7 +162,7 @@ async function scrapeFlightsForDate(
   date: string,
 ): Promise<FlightSlot[]> {
   try {
-    const clicked = await page.evaluate(clickCxDateCell, dir, date);
+    const clicked = await pageEval(page, clickCxDateCell, dir, date);
     if (clicked !== true) {
       cxlog(`timeslots: date cell not found ${dir} ${date}`);
       return [];
@@ -171,7 +170,7 @@ async function scrapeFlightsForDate(
     let best: FlightSlot[] = [];
     for (let i = 0; i < 16; i++) {
       await sleep(500);
-      const slots = ((await page.evaluate(scrapeCxFlightCards)) ?? []).filter(s => s.dir === dir);
+      const slots = ((await pageEval(page, scrapeCxFlightCards)) ?? []).filter(s => s.dir === dir);
       if (slots.length === 0 || !slots.every(s => s.date === date)) continue;
       best = slots;
       if (slots.every(s => s.miles != null)) return slots;
