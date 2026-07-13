@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CX Mile Puppeteer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <p class="eyebrow">Local award scanner</p>
+        <h1>CX Mile Puppeteer</h1>
+        <p class="lede">One-way Asia Miles search via headed Chromium. Fill the form, Start, watch results.</p>
+      </header>
+
+      <section class="panel" aria-labelledby="login-heading">
+        <h2 id="login-heading">Auto sign-in</h2>
+        <label class="row check">
+          <input id="autoLogin" type="checkbox" checked />
+          Enable auto sign-in when CX shows the login wall
+        </label>
+        <div class="grid3">
+          <label>
+            Country
+            <input id="countryCode" type="text" value="852" inputmode="numeric" autocomplete="tel-country-code" />
+          </label>
+          <label>
+            Mobile
+            <input id="mobile" type="text" inputmode="tel" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input id="password" type="password" autocomplete="current-password" />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="tasks-heading">
+        <div class="row between">
+          <h2 id="tasks-heading">Tasks</h2>
+          <button type="button" id="addTask" class="ghost">Add task</button>
+        </div>
+        <div id="tasks"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="opts-heading">
+        <h2 id="opts-heading">Options</h2>
+        <fieldset>
+          <legend>Cabins</legend>
+          <label><input type="checkbox" name="cabin" value="eco" /> Economy</label>
+          <label><input type="checkbox" name="cabin" value="pey" /> Premium Economy</label>
+          <label><input type="checkbox" name="cabin" value="bus" checked /> Business</label>
+          <label><input type="checkbox" name="cabin" value="fir" /> First</label>
+        </fieldset>
+        <div class="grid2">
+          <label>
+            Adults
+            <input id="adults" type="number" min="1" max="9" value="1" />
+          </label>
+          <label>
+            Interval (minutes)
+            <input id="intervalMin" type="number" min="1" value="30" />
+          </label>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button type="button" id="start" class="primary">Start</button>
+        <button type="button" id="stop" class="danger" disabled>Stop</button>
+        <p id="status" class="status" role="status">Idle</p>
+      </div>
+
+      <section class="panel" aria-labelledby="results-heading">
+        <h2 id="results-heading">Results</h2>
+        <ul id="results" class="list"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="log-heading">
+        <h2 id="log-heading">Log</h2>
+        <ul id="log" class="list mono"></ul>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
