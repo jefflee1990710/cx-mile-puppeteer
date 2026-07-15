@@ -8,7 +8,7 @@ import {
   scrapeToResult,
 } from './availability.js';
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
-import { isCdpAttached } from './browser.js';
+import { isCdpAttached, isNativeBrowser } from './browser.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
 import { classifyCxBounce, isMidOAuthNavigation } from './cxBounce.js';
 import { pause, warmSession } from './human.js';
@@ -26,7 +26,7 @@ export async function returnToRedeem(page: Page): Promise<void> {
   try {
     await page.goto(REDEEM_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await pause.page();
-    if (!isCdpAttached()) await warmSession(page);
+    if (!isNativeBrowser()) await warmSession(page);
   } catch (e) {
     cxlog('returnToRedeem failed', String(e));
   }
@@ -42,6 +42,11 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
     await pause.poll(1000);
     if (await isAkamaiDenied(page)) {
       cxlog('settleAwardSearch: Akamai Access Denied', page.url());
+      if (!isCdpAttached()) {
+        cxlog(
+          'hint: set CX_CDP_URL after .\\scripts\\launch-chrome-debug.ps1 (or ./scripts/launch-chrome-debug.sh); wipe chrome-profile if cookies are burned',
+        );
+      }
       return 'error';
     }
     let path = '';
@@ -114,7 +119,8 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
       await page.goto(REDEEM_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await pause.page();
     }
-    await warmSession(page);
+    // Mouse/scroll warming injects DOM observers — skip on native/system Chrome.
+    if (!isNativeBrowser()) await warmSession(page);
   } catch (e) {
     cxlog('openAwardSearch: redeem warm failed', String(e));
   }

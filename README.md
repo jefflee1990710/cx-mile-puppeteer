@@ -60,7 +60,7 @@ Notes:
 - Closest match (recommended on Windows if Access Denied): launch Chrome with debug port, set `CX_CDP_URL=http://127.0.0.1:9222`, then Start (attaches to that Chrome; skips stealth/fingerprint).
   - macOS/Linux: `./scripts/launch-chrome-debug.sh`
   - Windows: `.\scripts\launch-chrome-debug.ps1`
-- Local headed Chrome already has a real Chrome TLS stack; **do not spoof a Mac fingerprint on Windows** (fixed in code). **IP reputation** (residential proxy) still matters against hard blocks.
+- Local headed Chrome already has a real Chrome TLS stack; **do not spoof a Mac fingerprint on Windows** (fixed in code). **System Chrome launches vanilla (no stealth/fingerprint)** — if you still see `applying fingerprint`, you are on bundled Chromium. Prefer CDP on hard blocks. **IP reputation** (residential proxy) still matters.
 - Sticky residential sessions only — rotating IP every request looks bot-like.
 - Credentials stay in UI `localStorage` / `.env.local` (never commit).
 

@@ -15,24 +15,30 @@ import { installEvalShims } from './pageEval.js';
 // puppeteer-extra is CJS; load via require for stable .use/.launch typings under NodeNext.
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const puppeteer = require('puppeteer-extra') as {
+const puppeteerStealth = require('puppeteer-extra') as {
   use: (plugin: unknown) => void;
   launch: (options?: LaunchOptions) => Promise<Browser>;
   connect: (options: { browserWSEndpoint: string; defaultViewport?: null }) => Promise<Browser>;
 };
-// Vanilla Puppeteer for CDP attach — stealth/fingerprint patches themselves trip Akamai.
+// Vanilla Puppeteer — stealth/fingerprint patches themselves trip Akamai on CX.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const puppeteerVanilla = require('puppeteer') as {
+  launch: (options?: LaunchOptions) => Promise<Browser>;
   connect: (options: { browserWSEndpoint: string; defaultViewport?: null }) => Promise<Browser>;
 };
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const StealthPlugin = require('puppeteer-extra-plugin-stealth') as () => unknown;
-puppeteer.use(StealthPlugin());
+puppeteerStealth.use(StealthPlugin());
 
 let browser: Browser | null = null;
 let page: Page | null = null;
 /** True when attached to an already-running Chrome (extension-like path). */
 let cdpAttached = false;
+/**
+ * True when we launched system Google Chrome without stealth/fingerprint.
+ * Same philosophy as CDP: leave the real browser alone.
+ */
+let nativeChrome = false;
 /** Session-pinned proxy / CDP endpoint for this process (set at first launch). */
 let sessionMeta: { proxy?: string; browserWs?: string } | null = null;
 
@@ -51,6 +57,11 @@ function readCdpHttp(): string | undefined {
   return process.env.CX_CDP_URL?.trim() || process.env.CX_CHROME_CDP?.trim();
 }
 
+/** Opt back into stealth + spoofed fingerprint (debug only — usually worsens Akamai). */
+function forceFingerprint(): boolean {
+  return process.env.CX_FORCE_FINGERPRINT?.trim() === '1';
+}
+
 async function connectViaCdpHttp(httpBase: string): Promise<Browser> {
   const base = httpBase.replace(/\/$/, '');
   const res = await fetch(`${base}/json/version`);
@@ -58,7 +69,6 @@ async function connectViaCdpHttp(httpBase: string): Promise<Browser> {
   const json = (await res.json()) as { webSocketDebuggerUrl?: string };
   if (!json.webSocketDebuggerUrl) throw new Error('CDP response missing webSocketDebuggerUrl');
   cxlog('connecting to existing Chrome via CDP (no stealth)', base);
-  // Must not use puppeteer-extra stealth here — patches diverge from a real tab.
   return puppeteerVanilla.connect({
     browserWSEndpoint: json.webSocketDebuggerUrl,
     defaultViewport: null,
@@ -82,26 +92,7 @@ function chromeUserDataDir(): string {
   return dir;
 }
 
-async function applyPageFingerprint(p: Page, ua: string): Promise<void> {
-  const initScript = buildFingerprintInitScript(FINGERPRINT);
-  await p.setUserAgent(ua);
-  await p.setViewport({ ...FINGERPRINT.viewport });
-  await p.setExtraHTTPHeaders({
-    'Accept-Language': FINGERPRINT.languages.join(','),
-  });
-  await p.evaluateOnNewDocument(initScript);
-  await installEvalShims(p);
-  // Before any CX navigation so the debug pointer appears on every document.
-  await ensureVisibleMouse(p);
-  try {
-    await p.evaluate(initScript);
-  } catch {
-    // about:blank mid-load
-  }
-}
-
-async function launchLocalBrowser(): Promise<Browser> {
-  const proxy = readProxyServer();
+function baseLaunchArgs(proxy?: string): string[] {
   const args = [
     '--disable-blink-features=AutomationControlled',
     '--no-default-browser-check',
@@ -113,54 +104,80 @@ async function launchLocalBrowser(): Promise<Browser> {
     args.push(`--proxy-server=${proxy}`);
     cxlog('using session-pinned proxy', proxy.replace(/:[^:@/]+@/, ':***@'));
   }
+  return args;
+}
 
+function attachProxyAuth(b: Browser, proxy: string | undefined): void {
+  const user = process.env.CX_PROXY_USER?.trim();
+  const pass = process.env.CX_PROXY_PASS?.trim();
+  if (!proxy || !user) return;
+  b.on('targetcreated', async target => {
+    try {
+      const p = await target.page();
+      if (p) await p.authenticate({ username: user, password: pass ?? '' });
+    } catch {
+      // ignore
+    }
+  });
+}
+
+async function applyPageFingerprint(p: Page, ua: string): Promise<void> {
+  const initScript = buildFingerprintInitScript(FINGERPRINT);
+  await p.setUserAgent(ua);
+  await p.setViewport({ ...FINGERPRINT.viewport });
+  await p.setExtraHTTPHeaders({
+    'Accept-Language': FINGERPRINT.languages.join(','),
+  });
+  await p.evaluateOnNewDocument(initScript);
+  await installEvalShims(p);
+  await ensureVisibleMouse(p);
+  try {
+    await p.evaluate(initScript);
+  } catch {
+    // about:blank mid-load
+  }
+}
+
+type LocalLaunch = { browser: Browser; systemChrome: boolean };
+
+async function launchLocalBrowser(): Promise<LocalLaunch> {
+  const proxy = readProxyServer();
   const userDataDir = chromeUserDataDir();
-  // Prefer installed Google Chrome (real TLS + cookies) — bundled Chromium is what Akamai
-  // often Access-Denies. Falls back to Puppeteer's Chromium if Chrome is missing.
   const preferChrome = process.env.CX_USE_BUNDLED_CHROMIUM?.trim() !== '1';
   const opts: LaunchOptions = {
     headless: false,
     defaultViewport: null,
-    args,
+    args: baseLaunchArgs(proxy),
     ignoreDefaultArgs: ['--enable-automation'],
     userDataDir,
   };
+
   if (preferChrome) {
     opts.channel = 'chrome';
-    cxlog('launching system Chrome with persistent profile', userDataDir);
-  } else {
-    cxlog('launching bundled Chromium (CX_USE_BUNDLED_CHROMIUM=1)', userDataDir);
+    // System Chrome: vanilla Puppeteer — no stealth. Patches diverge from real TLS/JS.
+    cxlog('launching system Chrome (vanilla, no stealth)', userDataDir);
+    try {
+      const b = await puppeteerVanilla.launch(opts);
+      attachProxyAuth(b, proxy);
+      return { browser: b, systemChrome: true };
+    } catch (e) {
+      cxlog('system Chrome unavailable, falling back to bundled Chromium + stealth', String(e));
+      delete opts.channel;
+      const b = await puppeteerStealth.launch(opts);
+      attachProxyAuth(b, proxy);
+      return { browser: b, systemChrome: false };
+    }
   }
 
-  try {
-    const b = await puppeteer.launch(opts);
-    const user = process.env.CX_PROXY_USER?.trim();
-    const pass = process.env.CX_PROXY_PASS?.trim();
-    if (proxy && user) {
-      b.on('targetcreated', async target => {
-        try {
-          const p = await target.page();
-          if (p) await p.authenticate({ username: user, password: pass ?? '' });
-        } catch {
-          // ignore
-        }
-      });
-    }
-    return b;
-  } catch (e) {
-    if (preferChrome) {
-      cxlog('system Chrome unavailable, falling back to bundled Chromium', String(e));
-      delete opts.channel;
-      const b = await puppeteer.launch(opts);
-      return b;
-    }
-    throw e;
-  }
+  cxlog('launching bundled Chromium with stealth (CX_USE_BUNDLED_CHROMIUM=1)', userDataDir);
+  const b = await puppeteerStealth.launch(opts);
+  attachProxyAuth(b, proxy);
+  return { browser: b, systemChrome: false };
 }
 
 async function connectRemoteBrowser(ws: string): Promise<Browser> {
   cxlog('connecting remote browser (TLS fingerprint via provider)', ws.replace(/token=[^&]+/i, 'token=***'));
-  return puppeteer.connect({
+  return puppeteerStealth.connect({
     browserWSEndpoint: ws,
     defaultViewport: null,
   });
@@ -175,6 +192,7 @@ export async function getPage(): Promise<Page> {
     const proxy = readProxyServer();
     sessionMeta = { proxy, browserWs: browserWs || cdpHttp };
     cdpAttached = false;
+    nativeChrome = false;
 
     if (browserWs) {
       browser = await connectRemoteBrowser(browserWs);
@@ -182,8 +200,9 @@ export async function getPage(): Promise<Page> {
       browser = await connectViaCdpHttp(cdpHttp);
       cdpAttached = true;
     } else {
-      cxlog('launching headed browser (stealth + fingerprint)');
-      browser = await launchLocalBrowser();
+      const launched = await launchLocalBrowser();
+      browser = launched.browser;
+      nativeChrome = launched.systemChrome && !forceFingerprint();
     }
   }
 
@@ -195,9 +214,13 @@ export async function getPage(): Promise<Page> {
     await page.authenticate({ username: user, password: pass ?? '' });
   }
 
-  // CDP = real Chrome tab: only install the tsx __name shim. No UA/WebGL/mouse/emulation.
-  if (cdpAttached) {
-    cxlog('CDP attach: leaving browser fingerprint untouched');
+  // CDP or native system Chrome: only the tsx __name shim. No UA/WebGL/mouse/emulation.
+  if (cdpAttached || nativeChrome) {
+    cxlog(
+      cdpAttached
+        ? 'CDP attach: leaving browser fingerprint untouched'
+        : 'native Chrome: leaving browser fingerprint untouched (no stealth)',
+    );
     await installEvalShims(page);
     return page;
   }
@@ -208,7 +231,7 @@ export async function getPage(): Promise<Page> {
   } catch {
     // keep default
   }
-  cxlog('applying fingerprint', FINGERPRINT.platform, ua.slice(0, 72));
+  cxlog('applying fingerprint (bundled/remote path)', FINGERPRINT.platform, ua.slice(0, 72));
   await applyPageFingerprint(page, ua);
 
   try {
@@ -231,9 +254,18 @@ export function isCdpAttached(): boolean {
   return cdpAttached;
 }
 
+/**
+ * True when the browser should be left unpatched (CDP attach or system Chrome launch).
+ * Skip warm-session mouse overlays that can trip Akamai sensors.
+ */
+export function isNativeBrowser(): boolean {
+  return cdpAttached || nativeChrome;
+}
+
 export async function closeBrowser(): Promise<void> {
   page = null;
   cdpAttached = false;
+  nativeChrome = false;
   if (browser) {
     try {
       if (sessionMeta?.browserWs) {
