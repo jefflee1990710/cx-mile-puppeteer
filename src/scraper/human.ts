@@ -1,7 +1,6 @@
 /** Fixed and randomized pauses + human-like input helpers. */
 
 import { createRequire } from 'node:module';
-import { createCursor, type GhostCursor } from 'ghost-cursor';
 import type { ElementHandle, Page } from 'puppeteer';
 
 const require = createRequire(import.meta.url);
@@ -44,12 +43,11 @@ export const pause = {
   key: () => humanDelay(50, 200),
 };
 
-const cursors = new WeakMap<Page, GhostCursor>();
 const mouseHelperPages = new WeakSet<Page>();
 const lastPos = new WeakMap<Page, { x: number; y: number }>();
 
 /**
- * On-page mirror of the Puppeteer / ghost-cursor pointer.
+ * On-page mirror of the Puppeteer pointer.
  * Uses fixed positioning + explicit __cxSetCursorPos (CDP moves don't always
  * fire DOM mousemove reliably on all CX pages).
  */
@@ -163,16 +161,6 @@ export async function ensureVisibleMouse(page: Page): Promise<void> {
   }
 }
 
-export function getCursor(page: Page): GhostCursor {
-  let cursor = cursors.get(page);
-  if (!cursor) {
-    const start = lastPos.get(page) ?? { x: 120, y: 120 };
-    cursor = createCursor(page, start);
-    cursors.set(page, cursor);
-  }
-  return cursor;
-}
-
 async function setMirrorPos(page: Page, x: number, y: number): Promise<void> {
   lastPos.set(page, { x, y });
   try {
@@ -190,7 +178,7 @@ async function setMirrorPos(page: Page, x: number, y: number): Promise<void> {
 }
 
 /**
- * Ghost-cursor Bezier path, with the on-page mirror updated on every step
+ * Single Bezier mouse path, with the on-page mirror updated on every step
  * so you can see the pointer move even when DOM mousemove is unreliable.
  */
 export async function mirroredMoveTo(page: Page, dest: { x: number; y: number }): Promise<void> {
@@ -211,41 +199,31 @@ export async function mirroredMoveTo(page: Page, dest: { x: number; y: number })
     await setMirrorPos(page, x, y);
     await sleep(4 + Math.floor(Math.random() * 10));
   }
-
-  // Keep ghost-cursor's internal location aligned for subsequent clicks.
-  try {
-    const cursor = getCursor(page);
-    await cursor.moveTo(dest, { moveDelay: 0, randomizeMoveDelay: false });
-  } catch {
-    // ignore
-  }
   await setMirrorPos(page, Math.round(dest.x), Math.round(dest.y));
 }
 
-/** Bezier-curve mouse move + click (ghost-cursor). Falls back to element.click(). */
+/** One Bezier move to the target, then click in place. Falls back to element.click(). */
 export async function humanClick(
   page: Page,
   target: string | ElementHandle<Element>,
 ): Promise<boolean> {
   try {
     await ensureVisibleMouse(page);
-    const cursor = getCursor(page);
-    // Move visibly toward the target first when we can resolve a box.
-    try {
-      const handle = typeof target === 'string' ? await page.$(target) : target;
-      if (handle) {
-        const box = await handle.boundingBox();
-        if (box) {
-          await mirroredMoveTo(page, {
-            x: box.x + box.width * (0.3 + Math.random() * 0.4),
-            y: box.y + box.height * (0.3 + Math.random() * 0.4),
-          });
-        }
-      }
-    } catch {
-      // fall through to ghost click
+    const handle = typeof target === 'string' ? await page.$(target) : target;
+    if (!handle) return false;
+    const box = await handle.boundingBox();
+    if (box) {
+      await mirroredMoveTo(page, {
+        x: box.x + box.width * (0.3 + Math.random() * 0.4),
+        y: box.y + box.height * (0.3 + Math.random() * 0.4),
+      });
+      const hold = 40 + Math.floor(Math.random() * 80);
+      await page.mouse.down();
+      await sleep(hold);
+      await page.mouse.up();
+      return true;
     }
-    await cursor.click(target as never, { paddingPercentage: 20, moveDelay: 0 });
+    await handle.click({ delay: 40 + Math.floor(Math.random() * 80) });
     return true;
   } catch {
     try {
@@ -325,7 +303,7 @@ export function randomViewportPoint(width: number, height: number): { x: number;
 }
 
 /**
- * Idle between search passes: ghost-cursor Bezier moves to random points,
+ * Idle between search passes: Bezier moves to random points,
  * occasional light scrolls. Calls onTick ~every second with ms remaining.
  */
 export async function wanderWhileWaiting(
