@@ -11,20 +11,27 @@ Deterministic scrape only (no LLM). Sibling of [`cx-mile-flight-scanner`](../cx-
 
 ## Quick start
 
+Run these from the **repo root** (the folder that contains `package.json`):
+
 ```bash
+git clone https://github.com/jefflee1990710/cx-mile-puppeteer.git
+cd cx-mile-puppeteer
 pnpm install
 cp .env.example .env.local   # optional: proxy / Browserless
-pnpm dev
+pnpm start                   # or: pnpm dev (hot reload)
 ```
 
 Open [http://localhost:3847](http://localhost:3847), fill the award form, click **Start**. A visible **Google Chrome** window opens (persistent profile) and runs the search loop.
 
 | Script | Purpose |
 |---|---|
+| `pnpm start` | Run the app (`server.js` → `dist/` if built, else `tsx` source) |
 | `pnpm dev` | Server + UI with hot reload (`tsx watch`) |
 | `pnpm test` | Unit tests (URL / combos / availability — no browser) |
 | `pnpm type-check` | TypeScript |
-| `pnpm build` / `pnpm start` | Compile then run from `dist/` |
+| `pnpm build` / `pnpm start:dist` | Compile then run only from `dist/` |
+
+If you see `Missing script start or file server.js`, you are not in the project root — `cd` into `cx-mile-puppeteer` (where `package.json` and `server.js` live) and retry.
 
 ## Behaviour (v1)
 

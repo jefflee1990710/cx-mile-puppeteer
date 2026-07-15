@@ -29,6 +29,9 @@ importers:
       puppeteer-extra-plugin-stealth:
         specifier: ^2.11.2
         version: 2.11.2(puppeteer-extra@3.3.6(puppeteer-core@24.43.1)(puppeteer@24.43.1(typescript@5.9.3)))
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
     devDependencies:
       '@types/express':
         specifier: ^4.17.21
@@ -39,9 +42,6 @@ importers:
       '@types/node-notifier':
         specifier: ^8.0.5
         version: 8.0.5
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

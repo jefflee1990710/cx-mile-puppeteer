@@ -7,10 +7,12 @@
   "engines": {
     "node": ">=22"
   },
+  "main": "server.js",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server/index.js",
+    "start": "node server.js",
+    "start:dist": "node dist/server/index.js",
     "test": "vitest run",
     "type-check": "tsc -p tsconfig.json --noEmit"
   },
@@ -21,13 +23,13 @@
     "node-notifier": "^10.0.1",
     "puppeteer": "^24.10.0",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.2",
     "@types/node-notifier": "^8.0.5",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
