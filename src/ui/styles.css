@@ -59,7 +59,8 @@ body {
 }
 
 .shell {
-  width: min(420px, 100%);
+  width: 100%;
+  max-width: 720px;
   margin: 0 auto;
   padding: 12px 12px 32px;
   display: flex;
@@ -186,7 +187,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+}
+
+.row-between .section-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+input.select-sm,
+select.select-sm,
+input.input-sm {
+  width: 96px;
+  max-width: 96px;
+  flex: 0 0 96px;
 }
 
 label.check {
@@ -228,12 +243,6 @@ input:focus,
 select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.select-sm,
-.input-sm {
-  width: 96px;
-  flex-shrink: 0;
 }
 
 .hint {
