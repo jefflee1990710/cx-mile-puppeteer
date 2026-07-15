@@ -16,12 +16,19 @@ const puppeteer = require('puppeteer-extra') as {
   launch: (options?: LaunchOptions) => Promise<Browser>;
   connect: (options: { browserWSEndpoint: string; defaultViewport?: null }) => Promise<Browser>;
 };
+// Vanilla Puppeteer for CDP attach — stealth/fingerprint patches themselves trip Akamai.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const puppeteerVanilla = require('puppeteer') as {
+  connect: (options: { browserWSEndpoint: string; defaultViewport?: null }) => Promise<Browser>;
+};
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const StealthPlugin = require('puppeteer-extra-plugin-stealth') as () => unknown;
 puppeteer.use(StealthPlugin());
 
 let browser: Browser | null = null;
 let page: Page | null = null;
+/** True when attached to an already-running Chrome (extension-like path). */
+let cdpAttached = false;
 /** Session-pinned proxy / CDP endpoint for this process (set at first launch). */
 let sessionMeta: { proxy?: string; browserWs?: string } | null = null;
 
@@ -46,11 +53,21 @@ async function connectViaCdpHttp(httpBase: string): Promise<Browser> {
   if (!res.ok) throw new Error(`CDP /json/version failed HTTP ${res.status}`);
   const json = (await res.json()) as { webSocketDebuggerUrl?: string };
   if (!json.webSocketDebuggerUrl) throw new Error('CDP response missing webSocketDebuggerUrl');
-  cxlog('connecting to existing Chrome via CDP', base);
-  return puppeteer.connect({
+  cxlog('connecting to existing Chrome via CDP (no stealth)', base);
+  // Must not use puppeteer-extra stealth here — patches diverge from a real tab.
+  return puppeteerVanilla.connect({
     browserWSEndpoint: json.webSocketDebuggerUrl,
     defaultViewport: null,
   });
+}
+
+/** Prefer an existing CX tab (same idea as the extension's active tab). */
+async function pickCxPage(b: Browser): Promise<Page> {
+  const pages = await b.pages();
+  const cx =
+    pages.find(p => /cathaypacific\.com/i.test(p.url())) ??
+    pages.find(p => !/^chrome:\/\//i.test(p.url()) && p.url() !== 'about:blank');
+  return cx ?? pages[0] ?? b.newPage();
 }
 
 /** Persistent profile so Akamai/_abck cookies survive between runs (closer to the extension). */
@@ -152,24 +169,32 @@ export async function getPage(): Promise<Page> {
     const cdpHttp = readCdpHttp();
     const proxy = readProxyServer();
     sessionMeta = { proxy, browserWs: browserWs || cdpHttp };
+    cdpAttached = false;
 
     if (browserWs) {
       browser = await connectRemoteBrowser(browserWs);
     } else if (cdpHttp) {
       browser = await connectViaCdpHttp(cdpHttp);
+      cdpAttached = true;
     } else {
       cxlog('launching headed browser (stealth + fingerprint)');
       browser = await launchLocalBrowser();
     }
   }
 
-  const pages = await browser.pages();
-  page = pages[0] ?? (await browser.newPage());
+  page = cdpAttached ? await pickCxPage(browser) : ((await browser.pages())[0] ?? (await browser.newPage()));
 
   const user = process.env.CX_PROXY_USER?.trim();
   const pass = process.env.CX_PROXY_PASS?.trim();
   if (sessionMeta?.proxy && user) {
     await page.authenticate({ username: user, password: pass ?? '' });
+  }
+
+  // CDP = real Chrome tab: only install the tsx __name shim. No UA/WebGL/mouse/emulation.
+  if (cdpAttached) {
+    cxlog('CDP attach: leaving browser fingerprint untouched');
+    await installEvalShims(page);
+    return page;
   }
 
   let ua: string = FINGERPRINT.userAgent;
@@ -195,8 +220,14 @@ export function getSessionMeta(): { proxy?: string; browserWs?: string } | null 
   return sessionMeta;
 }
 
+/** True when controlling a user-launched Chrome via CX_CDP_URL (extension-like). */
+export function isCdpAttached(): boolean {
+  return cdpAttached;
+}
+
 export async function closeBrowser(): Promise<void> {
   page = null;
+  cdpAttached = false;
   if (browser) {
     try {
       if (sessionMeta?.browserWs) {

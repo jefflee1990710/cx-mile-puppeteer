@@ -8,6 +8,7 @@ import {
   scrapeToResult,
 } from './availability.js';
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
+import { isCdpAttached } from './browser.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
 import { classifyCxBounce } from './cxBounce.js';
 import { pause, warmSession } from './human.js';
@@ -25,7 +26,7 @@ export async function returnToRedeem(page: Page): Promise<void> {
   try {
     await page.goto(REDEEM_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await pause.page();
-    await warmSession(page);
+    if (!isCdpAttached()) await warmSession(page);
   } catch (e) {
     cxlog('returnToRedeem failed', String(e));
   }
@@ -88,6 +89,21 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
   cxlog('openAwardSearch navigate', url);
   await pause.combo();
 
+  try {
+    await page.evaluate(`(() => { window.__cxStalePage = true; })()`);
+  } catch {
+    // ignore
+  }
+
+  // CDP attach: mirror the extension — chrome.tabs.update(IBEFacade URL) only.
+  // No redeem warm, form fill, ghost cursor, or fingerprint (those trip Akamai).
+  if (isCdpAttached()) {
+    cxlog('openAwardSearch: CDP — tabs.update-style goto (extension path)');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+    await pause.page();
+    return settleAwardSearch(page);
+  }
+
   // Always start from the redeem document so the IBEFacade hit carries a real Referer
   // (extension navigates inside an already-open CX tab — cold CDP goto is what Akamai flags).
   try {
@@ -100,12 +116,6 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
     await warmSession(page);
   } catch (e) {
     cxlog('openAwardSearch: redeem warm failed', String(e));
-  }
-
-  try {
-    await page.evaluate(`(() => { window.__cxStalePage = true; })()`);
-  } catch {
-    // ignore
   }
 
   // Prefer in-page form submit (same as clicking Search on the site). Fallback: assign URL.

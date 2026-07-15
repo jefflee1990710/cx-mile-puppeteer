@@ -1,4 +1,5 @@
 import type { Page } from 'puppeteer';
+import { isCdpAttached } from './browser.js';
 import { humanClick, humanTypeInto, pause, warmSession } from './human.js';
 import { cxlog } from './log.js';
 import {
@@ -94,7 +95,7 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     await pause.page();
   }
 
-  await warmSession(page);
+  if (!isCdpAttached()) await warmSession(page);
 
   let step: 'mobile' | 'password' | null = null;
   for (let i = 0; i < 20 && !step; i++) {

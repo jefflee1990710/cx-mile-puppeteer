@@ -45,4 +45,5 @@ fi
 echo "Chrome CDP → http://127.0.0.1:$PORT"
 echo "Profile    → $PROFILE"
 echo "Set CX_CDP_URL=http://127.0.0.1:$PORT then pnpm dev / Start"
+echo "If Access Denied: rm -rf \"$PROFILE\" and relaunch (burned Akamai cookies)."
 exec "$CHROME" "${ARGS[@]}"
