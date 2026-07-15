@@ -41,6 +41,10 @@ function normalizeForm(body: Partial<CxForm>): CxForm {
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+app.get('/vendor/motion.js', (_req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(rootDir, 'node_modules/motion/dist/motion.js'));
+});
 app.use(express.static(uiDir));
 
 app.get('/api/status', (_req, res) => {

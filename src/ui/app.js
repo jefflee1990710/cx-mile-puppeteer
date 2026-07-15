@@ -198,8 +198,83 @@ function renderHistoryPanel() {
 }
 
 function setHistoryOpen(open) {
-  $('#historyPanel').hidden = !open;
+  void togglePanel($('#historyPanel'), open);
   if (open) renderHistoryPanel();
+}
+
+/**
+ * Motion (Framer Motion DOM) helpers — same feel as extension AnimatePresence
+ * (opacity + height, ~250ms easeInOut).
+ */
+function motionApi() {
+  return globalThis.Motion || null;
+}
+
+let uiAnimLock = Promise.resolve();
+
+function runUiAnim(fn) {
+  uiAnimLock = uiAnimLock.then(fn).catch(() => undefined);
+  return uiAnimLock;
+}
+
+async function animateIn(el) {
+  const M = motionApi();
+  el.hidden = false;
+  el.style.overflow = 'hidden';
+  el.style.opacity = '0';
+  el.style.height = '0px';
+  if (!M?.animate) {
+    el.style.opacity = '';
+    el.style.height = '';
+    el.style.overflow = '';
+    return;
+  }
+  await M.animate(el, { opacity: 1, height: 'auto' }, { duration: 0.25, ease: 'easeInOut' }).finished;
+  el.style.opacity = '';
+  el.style.height = '';
+  el.style.overflow = '';
+}
+
+async function animateOut(el) {
+  if (el.hidden) return;
+  const M = motionApi();
+  el.style.overflow = 'hidden';
+  if (!M?.animate) {
+    el.hidden = true;
+    el.style.overflow = '';
+    return;
+  }
+  await M.animate(el, { opacity: 0, height: 0 }, { duration: 0.25, ease: 'easeInOut' }).finished;
+  el.hidden = true;
+  el.style.opacity = '';
+  el.style.height = '';
+  el.style.overflow = '';
+}
+
+async function togglePanel(el, open) {
+  await runUiAnim(async () => {
+    if (open) {
+      if (!el.hidden) return;
+      await animateIn(el);
+    } else {
+      if (el.hidden) return;
+      await animateOut(el);
+    }
+  });
+}
+
+async function swapFormSummary(showSummary) {
+  const formEl = $('#searchForm');
+  const summaryEl = $('#searchSummary');
+  await runUiAnim(async () => {
+    if (showSummary) {
+      if (!formEl.hidden) await animateOut(formEl);
+      if (summaryEl.hidden) await animateIn(summaryEl);
+    } else {
+      if (!summaryEl.hidden) await animateOut(summaryEl);
+      if (formEl.hidden) await animateIn(formEl);
+    }
+  });
 }
 
 async function reuseHistoryEntry(entry) {
@@ -565,19 +640,23 @@ function setRunning(running, message) {
   $('#stop').disabled = !running;
   $('#stop').hidden = !running;
   $('#status').textContent = message || (running ? 'Searching…' : 'Idle');
-  $('#liveStatus').hidden = !running;
+
+  const live = $('#liveStatus');
+  if (running) {
+    if (live.hidden) void togglePanel(live, true);
+  } else if (!live.hidden) {
+    void togglePanel(live, false);
+  }
 
   const formEl = $('#searchForm');
   const summaryEl = $('#searchSummary');
   if (running) {
     if (!runningForm) runningForm = readFormFromDom();
     renderSearchSummary(runningForm);
-    formEl.hidden = true;
-    summaryEl.hidden = false;
+    if (!formEl.hidden || summaryEl.hidden) void swapFormSummary(true);
   } else {
     runningForm = null;
-    formEl.hidden = false;
-    summaryEl.hidden = true;
+    if (formEl.hidden || !summaryEl.hidden) void swapFormSummary(false);
   }
 }
 

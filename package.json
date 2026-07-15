@@ -17,6 +17,7 @@
   "dependencies": {
     "express": "^4.21.2",
     "ghost-cursor": "^1.4.2",
+    "motion": "^12.42.2",
     "node-notifier": "^10.0.1",
     "puppeteer": "^24.10.0",
     "puppeteer-extra": "^3.3.6",

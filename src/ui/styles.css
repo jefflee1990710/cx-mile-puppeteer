@@ -116,10 +116,6 @@ body {
   gap: 10px;
 }
 
-.history-panel[hidden] {
-  display: none;
-}
-
 .history-panel-head {
   display: flex;
   align-items: center;
@@ -664,12 +660,17 @@ select:focus {
   color: var(--accent-strong);
 }
 
-.live-status[hidden] {
-  display: none;
+#searchForm,
+.search-summary,
+.history-panel,
+.live-status {
+  will-change: height, opacity;
 }
 
 #searchForm[hidden],
-.search-summary[hidden] {
+.search-summary[hidden],
+.history-panel[hidden],
+.live-status[hidden] {
   display: none;
 }
 
