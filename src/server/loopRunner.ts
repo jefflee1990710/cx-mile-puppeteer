@@ -5,7 +5,7 @@ import { wanderWhileWaiting } from '../scraper/human.js';
 import { performCxLogin } from '../scraper/login.js';
 import { runSearchLoop } from '../scraper/loop.js';
 import type { CxForm } from '../scraper/types.js';
-import { notifySeats } from '../notify.js';
+import { notifySeats, clearSeatReminder } from '../notify.js';
 import { broadcast, emitLog } from './events.js';
 
 function todayIso(): string {
@@ -107,6 +107,7 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
           await returnToRedeem(page);
         },
         onPassStart: () => {
+          clearSeatReminder();
           lastPassAt = new Date().toISOString();
           broadcast({ type: 'passStart', at: lastPassAt });
           broadcast({
@@ -150,6 +151,7 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
       emitLog(`Loop error: ${message}`);
       broadcast({ type: 'error', message, at: new Date().toISOString() });
     } finally {
+      clearSeatReminder();
       running = false;
       stopFlag = false;
       loopPromise = null;
@@ -161,6 +163,7 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
 }
 
 export async function stopLoop(): Promise<void> {
+  clearSeatReminder();
   if (!running) {
     await closeBrowser();
     return;
