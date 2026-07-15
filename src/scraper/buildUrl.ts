@@ -12,27 +12,29 @@ export function buildCxDisplay(combo: Combo): string {
   return `${combo.origin}→${combo.dest} · ${cabin} · ${dates}`;
 }
 
-/** One-way award IBEFacade URL (no return-leg [2] params). */
+/**
+ * One-way award IBEFacade URL (no return-leg [2] params).
+ * Param set/order matches a live CX redeem search submit (incl. LOGINURL + isChecked=TRUE).
+ */
 export function buildAwardSearchUrl(combo: Combo): string {
   const yyyymmdd = (d: string) => d.replace(/-/g, '');
-  const p = new URLSearchParams({
-    ACTION: 'RED_AWARD_SEARCH',
-    'ORIGIN[1]': combo.origin,
-    'DESTINATION[1]': combo.dest,
-    'DEPARTUREDATE[1]': yyyymmdd(combo.range.start),
-    CABINCLASS: CABIN_CLASS[combo.cabin] ?? 'Y',
-    ADULT: String(combo.adults),
-    CHILD: '0',
-    FLEXIBLEDATE: 'true',
-    BRAND: 'CX',
-    ENTRYCOUNTRY: 'HK',
-    ENTRYLANGUAGE: 'en',
-    ENTRYPOINT: REDEEM_PAGE_URL,
-    RETURNURL: REDEEM_PAGE_URL,
-    ERRORURL: ERROR_URL,
-    LOGINURL: LOGIN_URL,
-    DISCOUNTCODE: '',
-    isChecked: 'TRUE',
-  });
+  const p = new URLSearchParams();
+  p.set('RETURNURL', REDEEM_PAGE_URL);
+  p.set('ENTRYCOUNTRY', 'HK');
+  p.set('DESTINATION[1]', combo.dest);
+  p.set('DISCOUNTCODE', '');
+  p.set('ENTRYPOINT', REDEEM_PAGE_URL);
+  p.set('CHILD', '0');
+  p.set('ADULT', String(combo.adults));
+  p.set('FLEXIBLEDATE', 'true');
+  p.set('ENTRYLANGUAGE', 'en');
+  p.set('BRAND', 'CX');
+  p.set('LOGINURL', LOGIN_URL);
+  p.set('ACTION', 'RED_AWARD_SEARCH');
+  p.set('CABINCLASS', CABIN_CLASS[combo.cabin] ?? 'Y');
+  p.set('ORIGIN[1]', combo.origin);
+  p.set('ERRORURL', ERROR_URL);
+  p.set('DEPARTUREDATE[1]', yyyymmdd(combo.range.start));
+  p.set('isChecked', 'TRUE');
   return `https://api.cathaypacific.com/redibe/IBEFacade?${p.toString()}`;
 }

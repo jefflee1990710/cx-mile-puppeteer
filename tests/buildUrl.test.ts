@@ -11,16 +11,20 @@ const combo: Combo = {
 };
 
 describe('buildAwardSearchUrl', () => {
-  it('builds one-way IBEFacade URL without return leg params', () => {
+  it('builds one-way IBEFacade URL matching the live CX search link', () => {
     const url = buildAwardSearchUrl(combo);
-    expect(url).toContain('https://api.cathaypacific.com/redibe/IBEFacade?');
-    expect(url).toContain('ACTION=RED_AWARD_SEARCH');
-    expect(url).toContain('ORIGIN%5B1%5D=HKG');
-    expect(url).toContain('DESTINATION%5B1%5D=NRT');
-    expect(url).toContain('DEPARTUREDATE%5B1%5D=20260801');
-    expect(url).toContain('CABINCLASS=C');
-    expect(url).not.toContain('ORIGIN%5B2%5D');
-    expect(url).not.toContain('DEPARTUREDATE%5B2%5D');
+    const q = new URL(url).searchParams;
+    expect(url.startsWith('https://api.cathaypacific.com/redibe/IBEFacade?')).toBe(true);
+    expect(q.get('ACTION')).toBe('RED_AWARD_SEARCH');
+    expect(q.get('ORIGIN[1]')).toBe('HKG');
+    expect(q.get('DESTINATION[1]')).toBe('NRT');
+    expect(q.get('DEPARTUREDATE[1]')).toBe('20260801');
+    expect(q.get('CABINCLASS')).toBe('C');
+    expect(q.get('LOGINURL')).toBe('https://www.cathaypacific.com/cx/en_HK/sign-in.html');
+    expect(q.get('isChecked')).toBe('TRUE');
+    expect(q.get('FLEXIBLEDATE')).toBe('true');
+    expect(q.get('ORIGIN[2]')).toBeNull();
+    expect(q.get('DEPARTUREDATE[2]')).toBeNull();
   });
 });
 

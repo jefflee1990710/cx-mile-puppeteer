@@ -10,6 +10,8 @@ export interface LoopDeps {
   openSearch: (combo: Combo) => Promise<OpenSearchOutcome>;
   readResults: (combo: Combo) => Promise<CxResult>;
   login?: () => Promise<'ok' | 'failed'>;
+  /** After OAuth login, wait for in-tab redirect to availability (no second cold goto). */
+  settleAfterLogin?: () => Promise<OpenSearchOutcome>;
   onLoginNeeded?: () => void;
   notify: (combo: Combo, result: CxResult) => void;
   onResult?: (combo: Combo, result: CxResult) => void;
@@ -47,13 +49,25 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
       let nav = await deps.openSearch(combo);
       if (nav === 'login' && deps.login) {
         cxlog('login wall hit — attempting auto sign-in');
-        const signedIn = (await deps.login()) === 'ok' ? await deps.openSearch(combo) : 'login';
-        if (signedIn === 'login') {
+        const loginOk = (await deps.login()) === 'ok';
+        if (!loginOk) {
           cxlog('auto sign-in failed — pausing loop for manual login');
           deps.onLoginNeeded?.();
           return { foundAny, pausedForLogin: true };
         }
-        nav = signedIn;
+        // Prefer settling the OAuth return tab (extension path) before cold re-navigation.
+        if (deps.settleAfterLogin) {
+          nav = await deps.settleAfterLogin();
+          cxlog('post-login settle', nav);
+        }
+        if (nav === 'login' || nav === 'error') {
+          nav = await deps.openSearch(combo);
+        }
+        if (nav === 'login') {
+          cxlog('auto sign-in failed — pausing loop for manual login');
+          deps.onLoginNeeded?.();
+          return { foundAny, pausedForLogin: true };
+        }
       }
       if (deps.isStopped()) {
         cxlog('loop stopped after navigation');

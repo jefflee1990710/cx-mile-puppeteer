@@ -9,12 +9,15 @@ import {
 } from './availability.js';
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
+import { classifyCxBounce } from './cxBounce.js';
 import { pause, warmSession } from './human.js';
 import { cxlog } from './log.js';
 import type { OpenSearchOutcome } from './loop.js';
 import { pageEval } from './pageEval.js';
 import type { Combo, CxResult, FlightSlot } from './types.js';
 import { REDEEM_PAGE_URL } from './types.js';
+
+const CABIN_CLASS: Record<string, string> = { eco: 'Y', pey: 'W', bus: 'C', fir: 'F' };
 
 export async function returnToRedeem(page: Page): Promise<void> {
   cxlog('returnToRedeem', REDEEM_PAGE_URL);
@@ -28,49 +31,160 @@ export async function returnToRedeem(page: Page): Promise<void> {
   }
 }
 
-export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSearchOutcome> {
-  const url = buildAwardSearchUrl(combo);
-  cxlog('openAwardSearch navigate', url);
-  await pause.combo();
-  await warmSession(page);
-  try {
-    await page.evaluate(`(() => { window.__cxStalePage = true; })()`);
-  } catch {
-    // ignore
-  }
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await pause.page();
-
-  const deadline = Date.now() + 60_000;
+/**
+ * Watch the current tab until CX award search settles (used after OAuth login return).
+ * Does not navigate — the extension's success path is login→OAuth→availability in-place.
+ */
+export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise<OpenSearchOutcome> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await pause.poll(1000);
+    if (await isAkamaiDenied(page)) {
+      cxlog('settleAwardSearch: Akamai Access Denied', page.url());
+      return 'error';
+    }
     let path = '';
     let query = '';
+    let href = '';
     try {
       const u = new URL(page.url());
       path = u.pathname;
       query = u.search;
+      href = u.href;
     } catch {
       continue;
     }
+    // Mid OAuth / createSession — keep waiting (this is the extension's real path).
+    if (/openiam\.cathaypacific\.com|\/oauth2\/|\/openId\/createSession/i.test(href)) {
+      continue;
+    }
     if (/sign-in|\/login/i.test(path)) return 'login';
-    if (/\.handler\.html/i.test(path) && /error_list=/i.test(query)) {
-      cxlog('openAwardSearch: rejected by CX', /error_list=([^&]+)/i.exec(query)?.[1] ?? 'unknown');
+
+    const bounce = classifyCxBounce(path, query);
+    if (bounce === 'login') {
+      cxlog('settleAwardSearch: login required', /error_list=([^&]+)/i.exec(query)?.[1] ?? 'unknown');
+      return 'login';
+    }
+    if (bounce === 'rejected') {
+      cxlog('settleAwardSearch: rejected by CX', /error_list=([^&]+)/i.exec(query)?.[1] ?? 'unknown');
       return 'rejected';
     }
+
     if (/\/availability/i.test(path)) {
-      const stale = await page.evaluate(`(() => window.__cxStalePage === true)()`);
-      if (stale) continue;
       const state = await waitForResults(page);
       if (state === 'noflights') {
-        cxlog('openAwardSearch: no flights');
+        cxlog('settleAwardSearch: no flights');
         return 'noflights';
       }
       if (state === 'cells') return 'ok';
     }
   }
-  cxlog('openAwardSearch timeout');
+  cxlog('settleAwardSearch timeout', page.url());
   return 'error';
+}
+
+export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSearchOutcome> {
+  const url = buildAwardSearchUrl(combo);
+  cxlog('openAwardSearch navigate', url);
+  await pause.combo();
+
+  // Always start from the redeem document so the IBEFacade hit carries a real Referer
+  // (extension navigates inside an already-open CX tab — cold CDP goto is what Akamai flags).
+  try {
+    const onRedeem = /redeem-flight-awards\.html/i.test(page.url());
+    if (!onRedeem) {
+      cxlog('openAwardSearch: open redeem page before search submit');
+      await page.goto(REDEEM_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await pause.page();
+    }
+    await warmSession(page);
+  } catch (e) {
+    cxlog('openAwardSearch: redeem warm failed', String(e));
+  }
+
+  try {
+    await page.evaluate(`(() => { window.__cxStalePage = true; })()`);
+  } catch {
+    // ignore
+  }
+
+  // Prefer in-page form submit (same as clicking Search on the site). Fallback: assign URL.
+  const submitted = await submitRedeemSearchForm(page, combo).catch(() => false);
+  if (!submitted) {
+    cxlog('openAwardSearch: form submit unavailable — location.assign from redeem');
+    await page.evaluate(`(u => { window.location.assign(u); })(${JSON.stringify(url)})`);
+  }
+  await pause.page();
+  return settleAwardSearch(page);
+}
+
+/** Fill the live redeem IBEFacade form and submit — preserves Referer like a real click. */
+async function submitRedeemSearchForm(page: Page, combo: Combo): Promise<boolean> {
+  const ymd = combo.range.start.replace(/-/g, '');
+  const cabin = CABIN_CLASS[combo.cabin] ?? 'Y';
+  const result = await pageEval(
+    page,
+    (origin: string, dest: string, departure: string, cabinClass: string, adults: number) => {
+      const forms = [...document.querySelectorAll('form')].filter(f =>
+        (f.getAttribute('action') || '').includes('IBEFacade'),
+      );
+      const form =
+        forms.find(
+          f => f.querySelector('input[name="ORIGIN[1]"]') && !f.querySelector('input[name="ORIGIN[2]"]'),
+        ) ?? forms[0];
+      if (!form) return false;
+      const set = (name: string, value: string) => {
+        let el = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+        if (!el) {
+          el = document.createElement('input');
+          el.type = 'hidden';
+          el.name = name;
+          form.appendChild(el);
+        }
+        el.value = value;
+      };
+      set('ACTION', 'RED_AWARD_SEARCH');
+      set('ORIGIN[1]', origin);
+      set('DESTINATION[1]', dest);
+      set('DEPARTUREDATE[1]', departure);
+      set('CABINCLASS', cabinClass);
+      set('ADULT', String(adults));
+      set('CHILD', '0');
+      set('FLEXIBLEDATE', 'true');
+      set('BRAND', 'CX');
+      set('DISCOUNTCODE', '');
+      set('isChecked', 'TRUE');
+      set('LOGINURL', 'https://www.cathaypacific.com/cx/en_HK/sign-in.html');
+      set('ENTRYPOINT', location.href.split('?')[0]);
+      set('RETURNURL', location.href.split('?')[0]);
+      set(
+        'ERRORURL',
+        'https://www.cathaypacific.com/cx/en_HK/book-a-trip/redeem-flights/redeem-flight-awards.handler.html',
+      );
+      set('ENTRYCOUNTRY', 'HK');
+      set('ENTRYLANGUAGE', 'en');
+      form.submit();
+      return true;
+    },
+    combo.origin,
+    combo.dest,
+    ymd,
+    cabin,
+    combo.adults,
+  );
+  cxlog('openAwardSearch: redeem form submit', result === true ? 'ok' : 'failed');
+  return result === true;
+}
+
+async function isAkamaiDenied(page: Page): Promise<boolean> {
+  try {
+    const text = await page.evaluate(
+      `(() => ((document.title || '') + ' ' + (document.body?.innerText || '')).slice(0, 500))()`,
+    );
+    return /Access Denied|errors\.edgesuite\.net|You don't have permission to access/i.test(String(text));
+  } catch {
+    return false;
+  }
 }
 
 async function waitForResults(page: Page): Promise<'cells' | 'noflights' | 'pending'> {

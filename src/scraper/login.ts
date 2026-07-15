@@ -76,6 +76,24 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     return 'failed';
   }
 
+  // Award bounce may land on redeem RETURNURL — only then go to bare sign-in.
+  // If already on sign-in?goto=oauth… KEEP that URL (createSession depends on it).
+  const SIGN_IN = 'https://www.cathaypacific.com/cx/en_HK/sign-in.html';
+  try {
+    const path = new URL(page.url()).pathname;
+    if (!/sign-in|\/login/i.test(path)) {
+      cxlog('login: navigating to sign-in page');
+      await page.goto(SIGN_IN, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await pause.page();
+    } else {
+      cxlog('login: staying on sign-in URL (preserving goto/OAuth state)', page.url().slice(0, 180));
+    }
+  } catch {
+    cxlog('login: navigating to sign-in page');
+    await page.goto(SIGN_IN, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => undefined);
+    await pause.page();
+  }
+
   await warmSession(page);
 
   let step: 'mobile' | 'password' | null = null;
@@ -154,28 +172,44 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     return 'failed';
   }
 
-  const deadline = Date.now() + 45_000;
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     await pause.poll(1200);
+    let href = '';
     let path = '';
     try {
-      path = new URL(page.url()).pathname;
+      const u = new URL(page.url());
+      href = u.href;
+      path = u.pathname;
     } catch {
       return 'failed';
     }
-    if (!/sign-in|\/login/i.test(path)) {
-      cxlog('login: signed in, left the sign-in page');
+    // Still on the membership sign-in form.
+    if (/sign-in|\/login/i.test(path)) {
+      try {
+        if ((await pageEval(page, detectLoginProblem)) === true) {
+          cxlog('login: CAPTCHA challenge or error banner after submit');
+          return 'failed';
+        }
+      } catch (e) {
+        cxlog('login: post-submit poll skipped', String(e));
+      }
+      continue;
+    }
+    // OAuth / RIBE createSession in progress — wait (this is what the extension relies on).
+    if (/openiam\.cathaypacific\.com|\/oauth2\/|\/openId\/createSession|\/redibe\/IBEFacade/i.test(href)) {
+      cxlog('login: OAuth/createSession in progress…');
+      continue;
+    }
+    if (/\/availability/i.test(path)) {
+      cxlog('login: signed in — landed on availability');
       return 'ok';
     }
-    try {
-      if ((await pageEval(page, detectLoginProblem)) === true) {
-        cxlog('login: CAPTCHA challenge or error banner after submit');
-        return 'failed';
-      }
-    } catch (e) {
-      cxlog('login: post-submit poll skipped', String(e));
+    if (/cathaypacific\.com/i.test(href)) {
+      cxlog('login: signed in — landed on', path);
+      return 'ok';
     }
   }
-  cxlog('login: timed out still on the sign-in page');
+  cxlog('login: timed out waiting for OAuth/session settle', page.url());
   return 'failed';
 }

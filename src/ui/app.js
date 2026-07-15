@@ -7,13 +7,18 @@ function uid() {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function defaultForm() {
   return {
     autoLogin: true,
     countryCode: '852',
     mobile: '',
     password: '',
-    tasks: [{ id: uid(), origin: 'HKG', dest: 'NRT', dates: [] }],
+    tasks: [{ id: uid(), origin: 'HKG', dest: 'NRT', dates: [todayIso()] }],
     cabins: ['bus'],
     adults: 1,
     intervalMin: 30,
@@ -24,7 +29,13 @@ function loadForm() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultForm();
-    return { ...defaultForm(), ...JSON.parse(raw) };
+    const parsed = { ...defaultForm(), ...JSON.parse(raw) };
+    const today = todayIso();
+    parsed.tasks = (parsed.tasks || defaultForm().tasks).map(t => ({
+      ...t,
+      dates: (t.dates || []).filter(d => d >= today),
+    }));
+    return parsed;
   } catch {
     return defaultForm();
   }
@@ -270,7 +281,7 @@ async function renderTasks(tasks) {
         <span class="field-label">Dates</span>
         <div class="date-chips"></div>
         <div class="date-add">
-          <input class="date-input" type="date" aria-label="Task ${index + 1} add date" />
+          <input class="date-input" type="date" min="${new Date().toISOString().slice(0, 10)}" aria-label="Task ${index + 1} add date" />
           <button type="button" class="link-btn add-date">+ Add</button>
         </div>
       </div>
@@ -373,8 +384,13 @@ function prepend(listEl, html, className) {
 async function start() {
   const form = readFormFromDom();
   saveForm(form);
+  const today = todayIso();
   if (!form.tasks.some(t => t.origin && t.dest && t.dates?.length)) {
     alert('Each task needs origin, destination, and at least one date.');
+    return;
+  }
+  if (form.tasks.some(t => (t.dates || []).some(d => d < today))) {
+    alert('Departure dates must be today or later.');
     return;
   }
   if (!form.cabins.length) {

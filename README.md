@@ -17,7 +17,7 @@ cp .env.example .env.local   # optional: proxy / Browserless
 pnpm dev
 ```
 
-Open [http://localhost:3847](http://localhost:3847), fill the award form, click **Start**. A visible Chromium window opens and runs the search loop.
+Open [http://localhost:3847](http://localhost:3847), fill the award form, click **Start**. A visible **Google Chrome** window opens (persistent profile) and runs the search loop.
 
 | Script | Purpose |
 |---|---|
@@ -44,12 +44,14 @@ All five layers below are wired in. Layers 2 and 5 need **your** credentials/end
 | **1. JS leaks** | `puppeteer-extra-plugin-stealth` + patches for `navigator.webdriver`, `chrome.runtime` / `csi`, languages/platform | automatic |
 | **2. Residential proxy** | Session-pinned `--proxy-server` for the whole process (no per-click rotate) | `CX_PROXY_SERVER`, optional `CX_PROXY_USER` / `CX_PROXY_PASS` |
 | **3. Hardware fingerprint** | UA matched to launched Chrome version; fixed viewport/locale/`Asia/Hong_Kong`; WebGL vendor/renderer spoof | automatic |
-| **4. Human behaviour** | Random pauses, `ghost-cursor` Bezier clicks, 50–200ms keystroke jitter, scroll warm-up before login/search | automatic |
-| **5. TLS / JA fingerprint** | Optional CDP connect to Browserless (or similar) so TLS ClientHello matches a real browser pool | `CX_BROWSER_WS` or `BROWSERLESS_WS` |
+| **4. Human behaviour** | Random pauses, `ghost-cursor` Bezier clicks, 50–200ms keystroke jitter, scroll warm-up on redeem before IBEFacade | automatic |
+| **5. TLS / JA fingerprint** | Default: **system Google Chrome** + persistent profile (closer to the extension). Optional CDP to Browserless | `CX_BROWSER_WS` / `CX_CHROME_PROFILE` |
 
 Notes:
 
-- Local headed Chromium already has a real Chrome TLS stack; stealth + UA alignment help, but **IP reputation** (residential proxy) and **remote browser** (Browserless) matter most against hard CAPTCHAs.
+- The Chrome **extension** works because it drives **your real Chrome tab** (real TLS, cookies, Akamai `_abck`, and the OAuth `goto`→`createSession` chain). A fresh Puppeteer window often gets **Access Denied** on `book.cathaypacific.com/.../availability` even with the same URL.
+- Closest match: run `./scripts/launch-chrome-debug.sh`, set `CX_CDP_URL=http://127.0.0.1:9222`, then Start (attaches to that Chrome; can also load the extension dist).
+- Local headed Chrome already has a real Chrome TLS stack; **IP reputation** (residential proxy) still matters against hard blocks.
 - Sticky residential sessions only — rotating IP every request looks bot-like.
 - Credentials stay in UI `localStorage` / `.env.local` (never commit).
 

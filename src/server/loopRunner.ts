@@ -1,11 +1,31 @@
 import { closeBrowser, getPage } from '../scraper/browser.js';
-import { openAwardSearch, readAwardResults, returnToRedeem } from '../scraper/awardSearch.js';
+import { openAwardSearch, readAwardResults, returnToRedeem, settleAwardSearch } from '../scraper/awardSearch.js';
 import { buildCxDisplay } from '../scraper/buildUrl.js';
 import { performCxLogin } from '../scraper/login.js';
 import { runSearchLoop } from '../scraper/loop.js';
 import type { CxForm } from '../scraper/types.js';
 import { notifySeats } from '../notify.js';
 import { broadcast, emitLog } from './events.js';
+
+function todayIso(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function assertSearchableDates(form: CxForm): string | null {
+  const today = todayIso();
+  for (let i = 0; i < form.tasks.length; i += 1) {
+    const dates = form.tasks[i].dates ?? [];
+    if (!dates.length) return `Task ${i + 1}: add at least one departure date`;
+    if (dates.some(d => d < today)) {
+      return `Task ${i + 1}: dates must be today or later (got ${dates.filter(d => d < today).join(', ')})`;
+    }
+  }
+  return null;
+}
 
 let running = false;
 let stopFlag = false;
@@ -23,6 +43,8 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
   if (!form.intervalMin || form.intervalMin < 1) {
     return { ok: false, status: 400, error: 'intervalMin must be >= 1' };
   }
+  const dateErr = assertSearchableDates(form);
+  if (dateErr) return { ok: false, status: 400, error: dateErr };
 
   running = true;
   stopFlag = false;
@@ -32,9 +54,11 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
   loopPromise = (async () => {
     try {
       const page = await getPage();
+
       const outcome = await runSearchLoop(form, {
         openSearch: c => openAwardSearch(page, c),
         readResults: c => readAwardResults(page, c),
+        settleAfterLogin: () => settleAwardSearch(page),
         login:
           form.autoLogin && form.mobile && form.password
             ? () =>
