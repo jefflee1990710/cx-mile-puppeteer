@@ -3,81 +3,122 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CX Mile Puppeteer</title>
+    <title>CX Flight Finder</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
-      <header class="brand">
-        <p class="eyebrow">Local award scanner</p>
-        <h1>CX Mile Puppeteer</h1>
-        <p class="lede">One-way Asia Miles search via headed Chromium. Fill the form, Start, watch results.</p>
+      <header class="app-header">
+        <span class="app-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M6 12 3.27 3.27a.5.5 0 0 1 .67-.6l16.5 8.46a.5.5 0 0 1 0 .9L3.94 20.33a.5.5 0 0 1-.67-.6L6 12Zm0 0h6"
+            />
+          </svg>
+        </span>
+        <div>
+          <h1>CX Flight Finder</h1>
+          <p class="subtitle">Award seat watcher</p>
+        </div>
       </header>
 
-      <section class="panel" aria-labelledby="login-heading">
-        <h2 id="login-heading">Auto sign-in</h2>
-        <label class="row check">
-          <input id="autoLogin" type="checkbox" checked />
-          Enable auto sign-in when CX shows the login wall
-        </label>
-        <div class="grid3">
-          <label>
-            Country
-            <input id="countryCode" type="text" value="852" inputmode="numeric" autocomplete="tel-country-code" />
-          </label>
-          <label>
-            Mobile
-            <input id="mobile" type="text" inputmode="tel" autocomplete="username" />
-          </label>
-          <label>
-            Password
-            <input id="password" type="password" autocomplete="current-password" />
-          </label>
+      <details class="card" id="loginPanel" open>
+        <summary>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 0h10.5a2.25 2.25 0 0 1 2.25 2.25v6A2.25 2.25 0 0 1 17.25 21H6.75A2.25 2.25 0 0 1 4.5 18.75v-6a2.25 2.25 0 0 1 2.25-2.25Z"
+            />
+          </svg>
+          Auto sign-in
+        </summary>
+        <div class="login-grid">
+          <input id="countryCode" type="text" value="852" inputmode="numeric" autocomplete="tel-country-code" placeholder="852" aria-label="Country code" />
+          <input id="mobile" type="text" inputmode="tel" autocomplete="username" placeholder="Mobile" aria-label="Mobile" />
+          <input id="password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" />
         </div>
-      </section>
+        <label class="check">
+          <input id="autoLogin" type="checkbox" checked />
+          Log in automatically
+        </label>
+      </details>
 
-      <section class="panel" aria-labelledby="tasks-heading">
-        <div class="row between">
-          <h2 id="tasks-heading">Tasks</h2>
-          <button type="button" id="addTask" class="ghost">Add task</button>
+      <section class="section" aria-labelledby="tasks-heading">
+        <div class="section-head">
+          <h2 id="tasks-heading" class="section-label">Search tasks</h2>
+          <span id="taskCount" class="muted-count">1 route</span>
         </div>
         <div id="tasks"></div>
+        <button type="button" id="addTask" class="link-btn">+ Add task</button>
       </section>
 
-      <section class="panel" aria-labelledby="opts-heading">
-        <h2 id="opts-heading">Options</h2>
-        <fieldset>
-          <legend>Cabins</legend>
-          <label><input type="checkbox" name="cabin" value="eco" /> Economy</label>
-          <label><input type="checkbox" name="cabin" value="pey" /> Premium Economy</label>
-          <label><input type="checkbox" name="cabin" value="bus" checked /> Business</label>
-          <label><input type="checkbox" name="cabin" value="fir" /> First</label>
-        </fieldset>
-        <div class="grid2">
-          <label>
-            Adults
-            <input id="adults" type="number" min="1" max="9" value="1" />
-          </label>
-          <label>
-            Interval (minutes)
-            <input id="intervalMin" type="number" min="1" value="30" />
-          </label>
+      <section class="card space-y">
+        <div class="row-between">
+          <span class="section-label tight">Adults</span>
+          <select id="adults" class="select-sm" aria-label="Adults">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+          </select>
+        </div>
+        <div>
+          <span class="section-label">Cabins</span>
+          <div class="cabin-chips" role="group" aria-label="Cabin classes">
+            <button type="button" class="cabin-chip" data-cabin="eco" aria-pressed="false">Economy 經濟</button>
+            <button type="button" class="cabin-chip" data-cabin="pey" aria-pressed="false">Premium Eco 特選經濟</button>
+            <button type="button" class="cabin-chip" data-cabin="bus" aria-pressed="true">Business 商務</button>
+            <button type="button" class="cabin-chip" data-cabin="fir" aria-pressed="false">First 頭等</button>
+          </div>
         </div>
       </section>
 
-      <div class="actions">
-        <button type="button" id="start" class="primary">Start</button>
-        <button type="button" id="stop" class="danger" disabled>Stop</button>
-        <p id="status" class="status" role="status">Idle</p>
+      <section class="card space-y">
+        <div class="row-between">
+          <span class="section-label tight">Auto-refresh (min)</span>
+          <input id="intervalMin" class="input-sm" type="number" min="1" value="30" aria-label="Interval minutes" />
+        </div>
+        <p id="intervalHint" class="hint">
+          Re-searches every 30m — each cycle clears the list, searches again, and notifies on any match. Press Stop to
+          end.
+        </p>
+      </section>
+
+      <div id="liveStatus" class="live-status" hidden>
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="status">Idle</span>
       </div>
 
-      <section class="panel" aria-labelledby="results-heading">
-        <h2 id="results-heading">Results</h2>
+      <div class="actions">
+        <button type="button" id="start" class="btn primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z" />
+          </svg>
+          Search award flights
+        </button>
+        <button type="button" id="stop" class="btn danger" disabled hidden>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+          Stop
+        </button>
+      </div>
+
+      <section class="card" aria-labelledby="results-heading">
+        <h2 id="results-heading" class="section-label">Search results</h2>
         <ul id="results" class="list"></ul>
       </section>
 
-      <section class="panel" aria-labelledby="log-heading">
-        <h2 id="log-heading">Log</h2>
+      <section class="card" aria-labelledby="log-heading">
+        <h2 id="log-heading" class="section-label">Log</h2>
         <ul id="log" class="list mono"></ul>
       </section>
     </main>

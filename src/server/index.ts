@@ -1,10 +1,14 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnvFiles } from '../loadEnv.js';
 import type { CxForm } from '../scraper/types.js';
 import { makeCxTask, syncTaskRangeFromDates } from '../scraper/types.js';
+import { fetchDestinations, fetchOrigins } from './airports.js';
 import { addSseClient, emitLog } from './events.js';
 import { getStatus, shutdown, startLoop, stopLoop } from './loopRunner.js';
+
+loadEnvFiles();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '../..');
@@ -41,6 +45,27 @@ app.use(express.static(uiDir));
 
 app.get('/api/status', (_req, res) => {
   res.json(getStatus());
+});
+
+app.get('/api/airports/origins', async (_req, res) => {
+  try {
+    res.json(await fetchOrigins());
+  } catch (e) {
+    res.status(502).json({ error: String(e) });
+  }
+});
+
+app.get('/api/airports/destinations/:origin', async (req, res) => {
+  try {
+    const origin = String(req.params.origin ?? '').toUpperCase().trim();
+    if (!/^[A-Z]{3}$/.test(origin)) {
+      res.status(400).json({ error: 'Invalid origin code' });
+      return;
+    }
+    res.json(await fetchDestinations(origin));
+  } catch (e) {
+    res.status(502).json({ error: String(e) });
+  }
 });
 
 app.get('/api/events', (req, res) => {

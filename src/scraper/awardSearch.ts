@@ -9,18 +9,20 @@ import {
 } from './availability.js';
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
+import { pause, warmSession } from './human.js';
 import { cxlog } from './log.js';
 import type { OpenSearchOutcome } from './loop.js';
 import { pageEval } from './pageEval.js';
 import type { Combo, CxResult, FlightSlot } from './types.js';
 import { REDEEM_PAGE_URL } from './types.js';
 
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
 export async function returnToRedeem(page: Page): Promise<void> {
   cxlog('returnToRedeem', REDEEM_PAGE_URL);
+  await pause.action();
   try {
     await page.goto(REDEEM_PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await pause.page();
+    await warmSession(page);
   } catch (e) {
     cxlog('returnToRedeem failed', String(e));
   }
@@ -29,16 +31,19 @@ export async function returnToRedeem(page: Page): Promise<void> {
 export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSearchOutcome> {
   const url = buildAwardSearchUrl(combo);
   cxlog('openAwardSearch navigate', url);
+  await pause.combo();
+  await warmSession(page);
   try {
     await page.evaluate(`(() => { window.__cxStalePage = true; })()`);
   } catch {
     // ignore
   }
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await pause.page();
 
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    await sleep(1000);
+    await pause.poll(1000);
     let path = '';
     let query = '';
     try {
@@ -76,13 +81,14 @@ async function waitForResults(page: Page): Promise<'cells' | 'noflights' | 'pend
     } catch {
       // mid-nav
     }
-    await sleep(1000);
+    await pause.poll(1000);
   }
   return 'pending';
 }
 
 export async function readAwardResults(page: Page, combo: Combo): Promise<CxResult> {
   try {
+    await pause.short();
     const scrape = (await pageEval(page, scrapeCxAvailability)) ?? { depart: [], ret: [] };
 
     if (scrape.depart.length === 0) {
@@ -113,7 +119,7 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
     for (let i = 0; i < 10; i++) {
       initial = (await pageEval(page, scrapeCxFlightCards)) ?? [];
       if (initial.length > 0 && initial.every(s => s.miles != null)) break;
-      await sleep(500);
+      await pause.poll(500);
     }
     cxlog(`timeslots initial: ${initial.length}`, initial[0]);
     bank(initial);
@@ -126,6 +132,7 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
         cxlog('timeslots: page looks wedged, skipping remaining dates');
         break;
       }
+      await pause.action();
       const slots = await scrapeFlightsForDate(page, 'depart', date);
       cxlog(`timeslots depart ${date}: ${slots.length}`, slots[0]);
       if (slots.length === 0) {
@@ -167,9 +174,10 @@ async function scrapeFlightsForDate(
       cxlog(`timeslots: date cell not found ${dir} ${date}`);
       return [];
     }
+    await pause.short();
     let best: FlightSlot[] = [];
     for (let i = 0; i < 16; i++) {
-      await sleep(500);
+      await pause.poll(500);
       const slots = ((await pageEval(page, scrapeCxFlightCards)) ?? []).filter(s => s.dir === dir);
       if (slots.length === 0 || !slots.every(s => s.date === date)) continue;
       best = slots;

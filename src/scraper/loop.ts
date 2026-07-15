@@ -1,5 +1,6 @@
 import { expandCombos } from './combos.js';
 import { buildCxDisplay } from './buildUrl.js';
+import { pause } from './human.js';
 import { cxlog } from './log.js';
 import type { Combo, CxForm, CxResult } from './types.js';
 
@@ -77,9 +78,13 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
         }
       }
       await deps.leaveResults?.(combo);
+      if (i < combos.length - 1 && !deps.isStopped()) {
+        await pause.combo();
+      }
     }
     if (deps.isStopped()) return { foundAny };
     cxlog(`loop pass ${pass} done; sleeping ${form.intervalMin}m`);
+    await pause.page();
     await deps.sleep(form.intervalMin * 60_000);
   }
   cxlog('loop exited (stopped)');
