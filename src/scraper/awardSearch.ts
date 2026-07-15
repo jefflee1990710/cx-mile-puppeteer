@@ -10,7 +10,7 @@ import {
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
 import { isCdpAttached } from './browser.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
-import { classifyCxBounce } from './cxBounce.js';
+import { classifyCxBounce, isMidOAuthNavigation } from './cxBounce.js';
 import { pause, warmSession } from './human.js';
 import { cxlog } from './log.js';
 import type { OpenSearchOutcome } from './loop.js';
@@ -55,10 +55,8 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
     } catch {
       continue;
     }
-    // Mid OAuth / createSession — keep waiting (this is the extension's real path).
-    if (/openiam\.cathaypacific\.com|\/oauth2\/|\/openId\/createSession/i.test(href)) {
-      continue;
-    }
+
+    // Sign-in wall first (path only). Never match oauth strings inside ?goto=.
     if (/sign-in|\/login/i.test(path)) return 'login';
 
     const bounce = classifyCxBounce(path, query);
@@ -70,6 +68,9 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
       cxlog('settleAwardSearch: rejected by CX', /error_list=([^&]+)/i.exec(query)?.[1] ?? 'unknown');
       return 'rejected';
     }
+
+    // Mid OAuth / createSession on the *current* host — keep waiting.
+    if (isMidOAuthNavigation(href)) continue;
 
     if (/\/availability/i.test(path)) {
       const state = await waitForResults(page);

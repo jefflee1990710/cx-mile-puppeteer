@@ -18,12 +18,38 @@
             />
           </svg>
         </span>
-        <div>
+        <div class="app-header-text">
           <h1>CX Flight Finder</h1>
           <p class="subtitle">Award seat watcher</p>
         </div>
+        <button type="button" id="historyBtn" class="icon-btn" aria-label="Search history" title="Search history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+            />
+          </svg>
+        </button>
       </header>
 
+      <div id="historyPanel" class="history-panel" hidden>
+        <div class="history-panel-head">
+          <h2 class="section-label">Search history</h2>
+          <div class="history-panel-actions">
+            <button type="button" id="historyClear" class="link-btn danger-link" hidden>Clear</button>
+            <button type="button" id="historyClose" class="icon-btn" aria-label="Close history">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p id="historyEmpty" class="hint">No searches yet. Start one to build history.</p>
+        <ul id="historyList" class="history-list" hidden></ul>
+      </div>
+
+      <div id="searchForm">
       <details class="card" id="loginPanel" open>
         <summary>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -90,6 +116,13 @@
           Re-searches every 30m — each cycle clears the list, searches again, and notifies on any match. Press Stop to
           end.
         </p>
+      </section>
+      </div>
+
+      <section id="searchSummary" class="card search-summary" hidden aria-live="polite">
+        <span class="section-label" id="summaryTitle">Searching…</span>
+        <ul id="summaryTasks" class="summary-tasks"></ul>
+        <p id="summaryMeta" class="summary-meta"></p>
       </section>
 
       <div id="liveStatus" class="live-status" hidden>

@@ -1,6 +1,6 @@
 import type { Page } from 'puppeteer';
-import { isCdpAttached } from './browser.js';
-import { humanClick, humanTypeInto, pause, warmSession } from './human.js';
+import { isMidOAuthNavigation } from './cxBounce.js';
+import { ensureVisibleMouse, humanClick, humanTypeInto, pause, warmSession } from './human.js';
 import { cxlog } from './log.js';
 import {
   clickMobileContinue,
@@ -30,7 +30,7 @@ async function readInputValue(page: Page, selector: string): Promise<string> {
 }
 
 async function fillMobileHuman(page: Page, countryCode: string, mobile: string): Promise<boolean> {
-  // Prefer real keystrokes; fall back to React-aware evaluate fill.
+  // Prefer real cursor + keystrokes; fall back to React-aware evaluate fill.
   const typed = await humanTypeInto(page, MOBILE_SEL, mobile);
   if (typed) {
     const v = await readInputValue(page, MOBILE_SEL);
@@ -52,7 +52,6 @@ async function fillPasswordHuman(page: Page, password: string): Promise<boolean>
 
 async function clickContinueHuman(page: Page): Promise<boolean> {
   if (await humanClick(page, CONTINUE_SEL)) return true;
-  // Try any visible Continue-labelled button via evaluate fallback.
   return (await pageEval(page, clickMobileContinue)) === true;
 }
 
@@ -60,7 +59,6 @@ async function clickSignInHuman(page: Page): Promise<boolean> {
   if (await page.$(SIGNIN_SEL)) {
     if (await humanClick(page, SIGNIN_SEL)) return true;
   }
-  // Text-match Sign in buttons.
   const handles = await page.$$('button.masterSignIn__btn, button, [role="button"]');
   for (const h of handles) {
     const text = await h.evaluate(el => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
@@ -95,7 +93,9 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     await pause.page();
   }
 
-  if (!isCdpAttached()) await warmSession(page);
+  // Visible cursor + Bezier moves for login fills (including CDP attach).
+  await ensureVisibleMouse(page);
+  await warmSession(page);
 
   let step: 'mobile' | 'password' | null = null;
   for (let i = 0; i < 20 && !step; i++) {
@@ -197,8 +197,8 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
       }
       continue;
     }
-    // OAuth / RIBE createSession in progress — wait (this is what the extension relies on).
-    if (/openiam\.cathaypacific\.com|\/oauth2\/|\/openId\/createSession|\/redibe\/IBEFacade/i.test(href)) {
+    // OAuth / RIBE createSession in progress — wait (host/path only; not goto= query).
+    if (isMidOAuthNavigation(href)) {
       cxlog('login: OAuth/createSession in progress…');
       continue;
     }

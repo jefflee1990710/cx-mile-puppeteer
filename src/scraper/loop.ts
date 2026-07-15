@@ -47,7 +47,12 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
       const display = buildCxDisplay(combo);
       cxlog(`combo ${i + 1}/${combos.length} run`, display);
       let nav = await deps.openSearch(combo);
-      if (nav === 'login' && deps.login) {
+      if (nav === 'login') {
+        if (!deps.login) {
+          cxlog('login wall hit — auto sign-in unavailable (missing creds or disabled)');
+          deps.onLoginNeeded?.();
+          return { foundAny, pausedForLogin: true };
+        }
         cxlog('login wall hit — attempting auto sign-in');
         const loginOk = (await deps.login()) === 'ok';
         if (!loginOk) {

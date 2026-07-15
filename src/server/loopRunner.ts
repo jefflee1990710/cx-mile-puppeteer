@@ -1,6 +1,7 @@
 import { closeBrowser, getPage } from '../scraper/browser.js';
 import { openAwardSearch, readAwardResults, returnToRedeem, settleAwardSearch } from '../scraper/awardSearch.js';
 import { buildCxDisplay } from '../scraper/buildUrl.js';
+import { wanderWhileWaiting } from '../scraper/human.js';
 import { performCxLogin } from '../scraper/login.js';
 import { runSearchLoop } from '../scraper/loop.js';
 import type { CxForm } from '../scraper/types.js';
@@ -25,6 +26,14 @@ function assertSearchableDates(form: CxForm): string | null {
     }
   }
   return null;
+}
+
+/** e.g. 185s → "3:05" */
+function formatCountdown(msLeft: number): string {
+  const totalSec = Math.max(0, Math.ceil(msLeft / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 let running = false;
@@ -54,20 +63,27 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
   loopPromise = (async () => {
     try {
       const page = await getPage();
+      const canAutoLogin = !!(form.autoLogin && form.mobile && form.password);
+      if (!canAutoLogin) {
+        emitLog(
+          form.autoLogin
+            ? 'Auto-login on, but mobile/password empty — will pause on sign-in wall'
+            : 'Auto-login off — will pause on sign-in wall',
+        );
+      }
 
       const outcome = await runSearchLoop(form, {
         openSearch: c => openAwardSearch(page, c),
         readResults: c => readAwardResults(page, c),
         settleAfterLogin: () => settleAwardSearch(page),
-        login:
-          form.autoLogin && form.mobile && form.password
-            ? () =>
-                performCxLogin(page, {
-                  countryCode: form.countryCode || '852',
-                  mobile: form.mobile,
-                  password: form.password,
-                })
-            : undefined,
+        login: canAutoLogin
+          ? () =>
+              performCxLogin(page, {
+                countryCode: form.countryCode || '852',
+                mobile: form.mobile,
+                password: form.password,
+              })
+          : undefined,
         onLoginNeeded: () => {
           emitLog('Auto sign-in failed — sign in manually in the Chromium window, then Start again');
           broadcast({
@@ -93,20 +109,35 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
         onPassStart: () => {
           lastPassAt = new Date().toISOString();
           broadcast({ type: 'passStart', at: lastPassAt });
+          broadcast({
+            type: 'status',
+            running: true,
+            message: 'Searching…',
+            at: lastPassAt,
+          });
           emitLog(`Pass started at ${lastPassAt}`);
         },
-        sleep: ms =>
-          new Promise(resolve => {
-            const start = Date.now();
-            const tick = () => {
-              if (stopFlag || Date.now() - start >= ms) {
-                resolve();
-                return;
-              }
-              setTimeout(tick, Math.min(1000, ms - (Date.now() - start)));
-            };
-            tick();
-          }),
+        sleep: async ms => {
+          await wanderWhileWaiting(page, ms, {
+            isStopped: () => stopFlag,
+            onTick: left => {
+              broadcast({
+                type: 'status',
+                running: true,
+                message: `Next round in ${formatCountdown(left)}`,
+                at: new Date().toISOString(),
+              });
+            },
+          });
+          if (!stopFlag) {
+            broadcast({
+              type: 'status',
+              running: true,
+              message: 'Searching…',
+              at: new Date().toISOString(),
+            });
+          }
+        },
         isStopped: () => stopFlag,
       });
       if (outcome.pausedForLogin) {

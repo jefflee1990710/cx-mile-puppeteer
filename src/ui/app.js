@@ -1,4 +1,6 @@
 const STORAGE_KEY = 'cx-mile-puppeteer-form-v1';
+const HISTORY_KEY = 'cx-mile-puppeteer-history-v1';
+const HISTORY_MAX = 50;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -10,6 +12,21 @@ function uid() {
 function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const CABIN_LABELS = {
+  eco: 'Economy 經濟',
+  pey: 'Premium Eco 特選經濟',
+  bus: 'Business 商務',
+  fir: 'First 頭等',
+};
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function defaultForm() {
@@ -43,6 +60,164 @@ function loadForm() {
 
 function saveForm(form) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
+}
+
+/** Strip password; keep enquiry fields for replay. */
+function toHistoryEntry(form, startedAt = Date.now()) {
+  return {
+    id: `${startedAt}-${Math.random().toString(36).slice(2, 8)}`,
+    startedAt,
+    autoLogin: !!form.autoLogin,
+    countryCode: form.countryCode || '852',
+    mobile: form.mobile || '',
+    tasks: (form.tasks || []).map(t => ({
+      id: t.id || uid(),
+      origin: t.origin || '',
+      dest: t.dest || '',
+      dates: [...(t.dates || [])],
+      range: t.range,
+    })),
+    cabins: [...(form.cabins || [])],
+    adults: form.adults || 1,
+    intervalMin: form.intervalMin || 30,
+  };
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(entries) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_MAX)));
+}
+
+function appendHistory(form) {
+  const entry = toHistoryEntry(form);
+  const next = [entry, ...loadHistory().filter(e => !sameEnquiry(e, entry))];
+  saveHistory(next);
+  return entry;
+}
+
+function sameEnquiry(a, b) {
+  return (
+    a.countryCode === b.countryCode &&
+    a.mobile === b.mobile &&
+    a.adults === b.adults &&
+    a.intervalMin === b.intervalMin &&
+    JSON.stringify(a.cabins) === JSON.stringify(b.cabins) &&
+    JSON.stringify(
+      (a.tasks || []).map(t => ({ o: t.origin, d: t.dest, dates: t.dates })),
+    ) ===
+      JSON.stringify((b.tasks || []).map(t => ({ o: t.origin, d: t.dest, dates: t.dates })))
+  );
+}
+
+function formatHistoryTime(ts) {
+  try {
+    return new Date(ts).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
+
+function entryToForm(entry) {
+  const current = readFormFromDom();
+  const today = todayIso();
+  return {
+    ...defaultForm(),
+    autoLogin: entry.autoLogin ?? true,
+    countryCode: entry.countryCode || '852',
+    mobile: entry.mobile || '',
+    // Keep current password (history never stores it).
+    password: current.password || '',
+    adults: entry.adults || 1,
+    intervalMin: entry.intervalMin || 30,
+    cabins: entry.cabins?.length ? entry.cabins : ['bus'],
+    tasks: (entry.tasks || []).map(t => ({
+      id: uid(),
+      origin: t.origin || '',
+      dest: t.dest || '',
+      dates: (t.dates || []).filter(d => d >= today),
+    })),
+  };
+}
+
+function renderHistoryPanel() {
+  const entries = loadHistory();
+  const list = $('#historyList');
+  const empty = $('#historyEmpty');
+  const clearBtn = $('#historyClear');
+  list.innerHTML = '';
+  if (!entries.length) {
+    empty.hidden = false;
+    list.hidden = true;
+    clearBtn.hidden = true;
+    return;
+  }
+  empty.hidden = true;
+  list.hidden = false;
+  clearBtn.hidden = false;
+  for (const entry of entries) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'history-item';
+    const routes = (entry.tasks || [])
+      .map(t => `${t.origin || '?'} → ${t.dest || '?'}`)
+      .join(', ');
+    const dates = (entry.tasks || [])
+      .flatMap(t => t.dates || [])
+      .filter(Boolean);
+    const uniqueDates = [...new Set(dates)].slice(0, 4).join(', ');
+    const cabinText = (entry.cabins || []).map(c => CABIN_LABELS[c] || c).join(' · ');
+    btn.innerHTML = `
+      <span class="history-item-time">${escapeHtml(formatHistoryTime(entry.startedAt))}</span>
+      <span class="history-item-routes">${escapeHtml(routes)}</span>
+      <span class="history-item-meta">${escapeHtml(
+        [uniqueDates, cabinText, `${entry.adults || 1} adult${(entry.adults || 1) > 1 ? 's' : ''}`, `every ${entry.intervalMin || 30}m`]
+          .filter(Boolean)
+          .join(' · '),
+      )}</span>
+    `;
+    btn.addEventListener('click', () => void reuseHistoryEntry(entry));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+function setHistoryOpen(open) {
+  $('#historyPanel').hidden = !open;
+  if (open) renderHistoryPanel();
+}
+
+async function reuseHistoryEntry(entry) {
+  if ($('#stop') && !$('#stop').hidden && !$('#stop').disabled) {
+    await fetch('/api/stop', { method: 'POST' }).catch(() => undefined);
+    setRunning(false, 'Idle');
+  }
+  setHistoryOpen(false);
+  const form = entryToForm(entry);
+  if (!form.tasks.some(t => t.origin && t.dest && t.dates?.length)) {
+    alert('That history entry has no remaining future dates. Add dates, then search.');
+    await applyForm(form);
+    saveForm(form);
+    return;
+  }
+  await applyForm(form);
+  saveForm(form);
+  await start();
 }
 
 /** @type {Array<{code:string,label:string,search:string}>} */
@@ -365,13 +540,45 @@ function persist() {
   saveForm(readFormFromDom());
 }
 
+/** @type {object | null} form snapshot shown while running */
+let runningForm = null;
+
+function renderSearchSummary(form) {
+  const n = form.tasks?.length || 0;
+  $('#summaryTitle').textContent = `Searching ${n} task${n === 1 ? '' : 's'}`;
+  const ul = $('#summaryTasks');
+  ul.innerHTML = '';
+  for (const t of form.tasks || []) {
+    const li = document.createElement('li');
+    const dates = (t.dates || []).join(', ') || '—';
+    li.innerHTML = `<span class="summary-route">${escapeHtml(t.origin)} → ${escapeHtml(t.dest)}</span><span class="summary-dates">${escapeHtml(dates)}</span>`;
+    ul.appendChild(li);
+  }
+  const cabinText = (form.cabins || []).map(c => CABIN_LABELS[c] || c).join(' · ');
+  const adults = form.adults || 1;
+  $('#summaryMeta').textContent = `${cabinText} · ${adults} ${adults > 1 ? 'adults' : 'adult'} · every ${form.intervalMin || 30}m`;
+}
+
 function setRunning(running, message) {
   $('#start').disabled = running;
   $('#start').hidden = running;
   $('#stop').disabled = !running;
   $('#stop').hidden = !running;
-  $('#status').textContent = message || (running ? 'Working…' : 'Idle');
+  $('#status').textContent = message || (running ? 'Searching…' : 'Idle');
   $('#liveStatus').hidden = !running;
+
+  const formEl = $('#searchForm');
+  const summaryEl = $('#searchSummary');
+  if (running) {
+    if (!runningForm) runningForm = readFormFromDom();
+    renderSearchSummary(runningForm);
+    formEl.hidden = true;
+    summaryEl.hidden = false;
+  } else {
+    runningForm = null;
+    formEl.hidden = false;
+    summaryEl.hidden = true;
+  }
 }
 
 function prepend(listEl, html, className) {
@@ -407,7 +614,10 @@ async function start() {
     alert(data.error || `Start failed (${res.status})`);
     return;
   }
-  setRunning(true, 'Working…');
+  appendHistory(form);
+  runningForm = form;
+  setHistoryOpen(false);
+  setRunning(true, 'Searching…');
   $('#results').innerHTML = '';
 }
 
@@ -426,9 +636,10 @@ function connectEvents() {
       return;
     }
     if (data.type === 'status') {
-      setRunning(!!data.running, data.message || (data.running ? 'Working…' : 'Idle'));
+      setRunning(!!data.running, data.message || (data.running ? 'Searching…' : 'Idle'));
     } else if (data.type === 'passStart') {
       $('#results').innerHTML = '';
+      setRunning(true, 'Searching…');
       prepend($('#log'), `[${data.at}] Pass start`);
     } else if (data.type === 'result') {
       prepend(
@@ -474,6 +685,16 @@ document.body.addEventListener('input', e => {
 });
 $('#start').addEventListener('click', start);
 $('#stop').addEventListener('click', stop);
+$('#historyBtn').addEventListener('click', () => {
+  const panel = $('#historyPanel');
+  setHistoryOpen(panel.hidden);
+});
+$('#historyClose').addEventListener('click', () => setHistoryOpen(false));
+$('#historyClear').addEventListener('click', () => {
+  if (!confirm('Clear all search history?')) return;
+  saveHistory([]);
+  renderHistoryPanel();
+});
 connectEvents();
 
 const form = loadForm();
@@ -483,5 +704,12 @@ loadOrigins()
 
 fetch('/api/status')
   .then(r => r.json())
-  .then(s => setRunning(!!s.running, s.running ? 'Working…' : 'Idle'))
+  .then(s => {
+    if (s.running) {
+      runningForm = loadForm();
+      setRunning(true, 'Searching…');
+    } else {
+      setRunning(false, 'Idle');
+    }
+  })
   .catch(() => undefined);

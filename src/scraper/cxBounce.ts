@@ -19,3 +19,25 @@ export function classifyCxBounce(path: string, query: string): CxBounceKind | nu
   }
   return null;
 }
+
+/**
+ * True only when the *current* document is mid OAuth/createSession.
+ * Must NOT match sign-in.html?goto=…openiam…/oauth2… — that query embeds the
+ * OAuth URL and previously prevented auto-login from ever starting.
+ */
+export function isMidOAuthNavigation(href: string): boolean {
+  try {
+    const u = new URL(href);
+    const host = u.hostname;
+    const path = u.pathname;
+    if (/openiam\.cathaypacific\.com/i.test(host)) return true;
+    if (/\/oauth2\//i.test(path) || /\/openId\/createSession/i.test(path)) return true;
+    if (/api\.cathaypacific\.com/i.test(host) && /\/(?:redibe\/)?(?:IBEFacade|openId)/i.test(path)) {
+      // Bare IBEFacade / createSession hosts — not www sign-in with LOGINURL in query.
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}

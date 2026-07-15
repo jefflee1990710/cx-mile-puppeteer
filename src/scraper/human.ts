@@ -1,7 +1,18 @@
 /** Fixed and randomized pauses + human-like input helpers. */
 
+import { createRequire } from 'node:module';
 import { createCursor, type GhostCursor } from 'ghost-cursor';
 import type { ElementHandle, Page } from 'puppeteer';
+
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { bezierCurve } = require('ghost-cursor/lib/math.js') as {
+  bezierCurve: (
+    start: { x: number; y: number },
+    finish: { x: number; y: number },
+    spreadOverride?: number,
+  ) => { getLUT: (steps: number) => Array<{ x: number; y: number }> };
+};
 
 export const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
 
@@ -35,137 +46,180 @@ export const pause = {
 
 const cursors = new WeakMap<Page, GhostCursor>();
 const mouseHelperPages = new WeakSet<Page>();
+const lastPos = new WeakMap<Page, { x: number; y: number }>();
 
 /**
- * Classic arrow cursor (SVG) — tip is at the hot-spot (pageX/pageY).
- * Runs in the browser context via evaluate / evaluateOnNewDocument.
+ * On-page mirror of the Puppeteer / ghost-cursor pointer.
+ * Uses fixed positioning + explicit __cxSetCursorPos (CDP moves don't always
+ * fire DOM mousemove reliably on all CX pages).
  */
 function injectArrowCursorHelper(): void {
-  const FLAG = 'data-cx-arrow-cursor';
-  if (document.documentElement?.getAttribute(FLAG) === '1') return;
-  document.documentElement?.setAttribute(FLAG, '1');
+  const w = window as Window & {
+    __cxSetCursorPos?: (x: number, y: number) => void;
+    __cxCursorInstalled?: boolean;
+  };
 
-  const attach = (): void => {
-    if (document.querySelector('cx-mouse-cursor')) return;
+  const ensure = (): void => {
+    let el = document.getElementById('cx-mouse-cursor');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cx-mouse-cursor';
+      const svg = encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">` +
+          `<path fill="#fff" stroke="#111" stroke-width="1.25" stroke-linejoin="round" ` +
+          `d="M4.2 2.4v17.2l4.3-4.2 2.4 5.7 2.5-1-2.4-5.7h6.8z"/>` +
+          `</svg>`,
+      );
+      el.style.cssText = [
+        'pointer-events:none',
+        'position:fixed',
+        'top:0',
+        'left:0',
+        'z-index:2147483647',
+        'width:24px',
+        'height:24px',
+        'margin:0',
+        'padding:0',
+        'transform:translate(-2px,-2px)',
+        `background:url("data:image/svg+xml,${svg}") no-repeat 0 0 / 24px 24px`,
+        'filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))',
+        'will-change:left,top',
+      ].join(';');
+      (document.documentElement ?? document.body)?.appendChild(el);
+    }
 
-    const cursor = document.createElement('cx-mouse-cursor');
-    const style = document.createElement('style');
-    // White fill + black outline arrow; tip at top-left (0,0) = click hot-spot.
-    const svg = encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">` +
-        `<path fill="#fff" stroke="#111" stroke-width="1.25" stroke-linejoin="round" ` +
-        `d="M4.2 2.4v17.2l4.3-4.2 2.4 5.7 2.5-1-2.4-5.7h6.8z"/>` +
-        `</svg>`,
-    );
-    style.textContent = `
-      cx-mouse-cursor {
-        pointer-events: none !important;
-        position: absolute;
-        top: 0;
-        left: 0;
-        z-index: 2147483647;
-        width: 24px;
-        height: 24px;
-        margin: 0;
-        padding: 0;
-        background: url("data:image/svg+xml,${svg}") no-repeat 0 0 / 24px 24px;
-        filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));
-        transition: transform .08s ease-out, filter .08s ease-out;
-        will-change: left, top, transform;
-      }
-      cx-mouse-cursor.button-1 {
-        transform: scale(0.9);
-        filter: drop-shadow(0 0 0 rgba(0,0,0,0)) brightness(0.85);
-      }
-      cx-mouse-cursor.cx-mouse-hide {
-        display: none;
-      }
-    `;
+    if (!document.getElementById('cx-mouse-cursor-style')) {
+      const style = document.createElement('style');
+      style.id = 'cx-mouse-cursor-style';
+      style.textContent = `
+        html.cx-mirror-cursor, html.cx-mirror-cursor * { cursor: none !important; }
+        #cx-mouse-cursor.cx-mouse-down { transform: translate(-2px,-2px) scale(0.9); filter: brightness(0.85); }
+      `;
+      (document.head ?? document.documentElement).appendChild(style);
+    }
+    document.documentElement?.classList.add('cx-mirror-cursor');
 
-    const root = document.documentElement;
-    (document.head ?? root).appendChild(style);
-    (document.body ?? root).appendChild(cursor);
-
-    const updateButtons = (buttons: number): void => {
-      for (let i = 0; i < 5; i++) {
-        cursor.classList.toggle(`button-${i}`, Boolean(buttons & (1 << i)));
-      }
+    w.__cxSetCursorPos = (x: number, y: number) => {
+      const node = document.getElementById('cx-mouse-cursor');
+      if (!node) return;
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
+      node.style.display = 'block';
     };
+
+    if (w.__cxCursorInstalled) return;
+    w.__cxCursorInstalled = true;
 
     document.addEventListener(
       'mousemove',
       event => {
-        cursor.style.left = `${event.pageX}px`;
-        cursor.style.top = `${event.pageY}px`;
-        cursor.classList.remove('cx-mouse-hide');
-        updateButtons(event.buttons);
+        w.__cxSetCursorPos?.(event.clientX, event.clientY);
       },
       true,
     );
     document.addEventListener(
       'mousedown',
-      event => {
-        updateButtons(event.buttons);
-        cursor.classList.add(`button-${event.which}`);
-        cursor.classList.remove('cx-mouse-hide');
-      },
+      () => document.getElementById('cx-mouse-cursor')?.classList.add('cx-mouse-down'),
       true,
     );
     document.addEventListener(
       'mouseup',
-      event => {
-        updateButtons(event.buttons);
-        cursor.classList.remove(`button-${event.which}`);
-        cursor.classList.remove('cx-mouse-hide');
-      },
+      () => document.getElementById('cx-mouse-cursor')?.classList.remove('cx-mouse-down'),
       true,
     );
-    document.addEventListener(
-      'mouseleave',
-      () => {
-        cursor.classList.add('cx-mouse-hide');
-      },
-      true,
-    );
-    document.addEventListener(
-      'mouseenter',
-      () => {
-        cursor.classList.remove('cx-mouse-hide');
-      },
-      true,
-    );
+
+    // CX / React may wipe our node — put it back.
+    const mo = new MutationObserver(() => {
+      if (!document.getElementById('cx-mouse-cursor')) ensure();
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
   };
 
   if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', attach, { once: true });
+    window.addEventListener('DOMContentLoaded', ensure, { once: true });
   } else {
-    attach();
+    ensure();
   }
 }
 
 /**
  * Show a visible arrow cursor overlay so headed sessions can watch moves.
- * Registers for future documents and attaches to the current one when possible.
+ * Registers for future documents and re-attaches to the current one after navigations.
  */
 export async function ensureVisibleMouse(page: Page): Promise<void> {
-  if (mouseHelperPages.has(page)) return;
-  mouseHelperPages.add(page);
-  await page.evaluateOnNewDocument(injectArrowCursorHelper);
+  if (!mouseHelperPages.has(page)) {
+    mouseHelperPages.add(page);
+    await page.evaluateOnNewDocument(injectArrowCursorHelper);
+  }
+  try {
+    await page.bringToFront();
+  } catch {
+    // ignore
+  }
   try {
     await page.evaluate(injectArrowCursorHelper);
   } catch {
-    // about:blank / detached — OnNewDocument still covers the next navigation.
+    // about:blank / detached — OnNewDocument still covers the next load.
   }
 }
 
 export function getCursor(page: Page): GhostCursor {
   let cursor = cursors.get(page);
   if (!cursor) {
-    // visible helper is installed separately (once) via ensureVisibleMouse
-    cursor = createCursor(page);
+    const start = lastPos.get(page) ?? { x: 120, y: 120 };
+    cursor = createCursor(page, start);
     cursors.set(page, cursor);
   }
   return cursor;
+}
+
+async function setMirrorPos(page: Page, x: number, y: number): Promise<void> {
+  lastPos.set(page, { x, y });
+  try {
+    await page.evaluate(
+      (px, py) => {
+        const w = window as Window & { __cxSetCursorPos?: (a: number, b: number) => void };
+        w.__cxSetCursorPos?.(px, py);
+      },
+      x,
+      y,
+    );
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Ghost-cursor Bezier path, with the on-page mirror updated on every step
+ * so you can see the pointer move even when DOM mousemove is unreliable.
+ */
+export async function mirroredMoveTo(page: Page, dest: { x: number; y: number }): Promise<void> {
+  await ensureVisibleMouse(page);
+  const from = lastPos.get(page) ?? { x: 80 + Math.random() * 40, y: 80 + Math.random() * 40 };
+  const curve = bezierCurve(from, dest);
+  const steps = Math.max(18, Math.min(55, Math.floor(Math.hypot(dest.x - from.x, dest.y - from.y) / 8)));
+  const points = curve.getLUT(steps);
+
+  for (const p of points) {
+    const x = Math.round(p.x);
+    const y = Math.round(p.y);
+    try {
+      await page.mouse.move(x, y);
+    } catch {
+      // ignore
+    }
+    await setMirrorPos(page, x, y);
+    await sleep(4 + Math.floor(Math.random() * 10));
+  }
+
+  // Keep ghost-cursor's internal location aligned for subsequent clicks.
+  try {
+    const cursor = getCursor(page);
+    await cursor.moveTo(dest, { moveDelay: 0, randomizeMoveDelay: false });
+  } catch {
+    // ignore
+  }
+  await setMirrorPos(page, Math.round(dest.x), Math.round(dest.y));
 }
 
 /** Bezier-curve mouse move + click (ghost-cursor). Falls back to element.click(). */
@@ -176,7 +230,22 @@ export async function humanClick(
   try {
     await ensureVisibleMouse(page);
     const cursor = getCursor(page);
-    await cursor.click(target as never, { paddingPercentage: 20 });
+    // Move visibly toward the target first when we can resolve a box.
+    try {
+      const handle = typeof target === 'string' ? await page.$(target) : target;
+      if (handle) {
+        const box = await handle.boundingBox();
+        if (box) {
+          await mirroredMoveTo(page, {
+            x: box.x + box.width * (0.3 + Math.random() * 0.4),
+            y: box.y + box.height * (0.3 + Math.random() * 0.4),
+          });
+        }
+      }
+    } catch {
+      // fall through to ghost click
+    }
+    await cursor.click(target as never, { paddingPercentage: 20, moveDelay: 0 });
     return true;
   } catch {
     try {
@@ -241,4 +310,70 @@ export async function warmSession(page: Page): Promise<void> {
     // ignore
   }
   await pause.action();
+}
+
+/** Pick a random on-viewport point with padding from edges. */
+export function randomViewportPoint(width: number, height: number): { x: number; y: number } {
+  const padX = Math.min(80, Math.max(16, width * 0.08));
+  const padY = Math.min(80, Math.max(16, height * 0.08));
+  const w = Math.max(1, width - padX * 2);
+  const h = Math.max(1, height - padY * 2);
+  return {
+    x: padX + Math.random() * w,
+    y: padY + Math.random() * h,
+  };
+}
+
+/**
+ * Idle between search passes: ghost-cursor Bezier moves to random points,
+ * occasional light scrolls. Calls onTick ~every second with ms remaining.
+ */
+export async function wanderWhileWaiting(
+  page: Page,
+  durationMs: number,
+  opts: {
+    isStopped: () => boolean;
+    onTick?: (msLeft: number) => void;
+  },
+): Promise<void> {
+  const start = Date.now();
+  let nextMoveAt = 0;
+
+  try {
+    await ensureVisibleMouse(page);
+  } catch {
+    // page may be mid-nav
+  }
+
+  while (!opts.isStopped()) {
+    const left = durationMs - (Date.now() - start);
+    if (left <= 0) break;
+    opts.onTick?.(left);
+
+    if (Date.now() >= nextMoveAt) {
+      try {
+        if (!page.isClosed()) {
+          await ensureVisibleMouse(page);
+          const size = await page.evaluate(() => ({
+            w: window.innerWidth || 1200,
+            h: window.innerHeight || 800,
+          }));
+          const dest = randomViewportPoint(size.w, size.h);
+          await mirroredMoveTo(page, dest);
+          if (Math.random() < 0.3) {
+            const delta = (Math.random() < 0.5 ? 1 : -1) * (40 + Math.floor(Math.random() * 140));
+            await page.mouse.wheel({ deltaY: delta });
+          }
+        }
+      } catch {
+        // redeem page reload / detach — keep waiting
+      }
+      // Next wander in 2.5–9s (don't spam moves for a 30m wait).
+      nextMoveAt = Date.now() + 2500 + Math.floor(Math.random() * 6500);
+    }
+
+    const leftAfter = durationMs - (Date.now() - start);
+    if (leftAfter <= 0) break;
+    await sleep(Math.min(1000, leftAfter));
+  }
 }

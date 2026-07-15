@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { humanDelay, sleep } from '../src/scraper/human.js';
+import { humanDelay, randomViewportPoint, sleep } from '../src/scraper/human.js';
 
 describe('humanDelay', () => {
   it('waits within the requested range', async () => {
@@ -15,5 +15,17 @@ describe('humanDelay', () => {
     const t0 = Date.now();
     await sleep(30);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+  });
+});
+
+describe('randomViewportPoint', () => {
+  it('stays inside the viewport with edge padding', () => {
+    for (let i = 0; i < 40; i++) {
+      const p = randomViewportPoint(1440, 900);
+      expect(p.x).toBeGreaterThanOrEqual(16);
+      expect(p.y).toBeGreaterThanOrEqual(16);
+      expect(p.x).toBeLessThanOrEqual(1440 - 16);
+      expect(p.y).toBeLessThanOrEqual(900 - 16);
+    }
   });
 });
