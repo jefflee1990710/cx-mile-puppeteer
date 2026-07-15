@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Browser, LaunchOptions, Page } from 'puppeteer';
-import { FINGERPRINT, FINGERPRINT_INIT_SCRIPT, userAgentForChromeVersion } from './fingerprint.js';
+import {
+  FINGERPRINT,
+  buildFingerprintInitScript,
+  userAgentForChromeVersion,
+} from './fingerprint.js';
 import { ensureVisibleMouse } from './human.js';
 import { cxlog } from './log.js';
 import { installEvalShims } from './pageEval.js';
@@ -79,17 +83,18 @@ function chromeUserDataDir(): string {
 }
 
 async function applyPageFingerprint(p: Page, ua: string): Promise<void> {
+  const initScript = buildFingerprintInitScript(FINGERPRINT);
   await p.setUserAgent(ua);
   await p.setViewport({ ...FINGERPRINT.viewport });
   await p.setExtraHTTPHeaders({
     'Accept-Language': FINGERPRINT.languages.join(','),
   });
-  await p.evaluateOnNewDocument(FINGERPRINT_INIT_SCRIPT);
+  await p.evaluateOnNewDocument(initScript);
   await installEvalShims(p);
   // Before any CX navigation so the debug pointer appears on every document.
   await ensureVisibleMouse(p);
   try {
-    await p.evaluate(FINGERPRINT_INIT_SCRIPT);
+    await p.evaluate(initScript);
   } catch {
     // about:blank mid-load
   }
@@ -203,6 +208,7 @@ export async function getPage(): Promise<Page> {
   } catch {
     // keep default
   }
+  cxlog('applying fingerprint', FINGERPRINT.platform, ua.slice(0, 72));
   await applyPageFingerprint(page, ua);
 
   try {

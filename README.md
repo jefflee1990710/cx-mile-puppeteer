@@ -57,8 +57,10 @@ All five layers below are wired in. Layers 2 and 5 need **your** credentials/end
 Notes:
 
 - The Chrome **extension** works because it drives **your real Chrome tab** (real TLS, cookies, Akamai `_abck`, and the OAuth `goto`→`createSession` chain). A fresh Puppeteer window often gets **Access Denied** on `book.cathaypacific.com/.../availability` even with the same URL.
-- Closest match: run `./scripts/launch-chrome-debug.sh`, set `CX_CDP_URL=http://127.0.0.1:9222`, then Start (attaches to that Chrome; can also load the extension dist).
-- Local headed Chrome already has a real Chrome TLS stack; **IP reputation** (residential proxy) still matters against hard blocks.
+- Closest match (recommended on Windows if Access Denied): launch Chrome with debug port, set `CX_CDP_URL=http://127.0.0.1:9222`, then Start (attaches to that Chrome; skips stealth/fingerprint).
+  - macOS/Linux: `./scripts/launch-chrome-debug.sh`
+  - Windows: `.\scripts\launch-chrome-debug.ps1`
+- Local headed Chrome already has a real Chrome TLS stack; **do not spoof a Mac fingerprint on Windows** (fixed in code). **IP reputation** (residential proxy) still matters against hard blocks.
 - Sticky residential sessions only — rotating IP every request looks bot-like.
 - Credentials stay in UI `localStorage` / `.env.local` (never commit).
 

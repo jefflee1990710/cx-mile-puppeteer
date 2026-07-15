@@ -1,35 +1,142 @@
-/** Stable desktop fingerprint aligned with headed Chromium. */
+/** Desktop fingerprint aligned with the host OS + headed Chrome. */
 
-export const FINGERPRINT = {
+export type WebGlFingerprint = {
+  vendor: string;
+  renderer: string;
+};
+
+export type FingerprintProfile = {
   /** Overridden at launch if browser.version() is available. */
-  userAgent:
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  userAgent: string;
   viewport: {
-    width: 1440,
-    height: 900,
-    deviceScaleFactor: 2,
-    isMobile: false,
-    hasTouch: false,
-    isLandscape: true,
-  },
-  locale: 'en-HK',
-  languages: ['en-HK', 'en', 'zh-HK', 'zh'],
-  timezoneId: 'Asia/Hong_Kong',
-  platform: 'MacIntel',
-  webgl: {
-    vendor: 'Google Inc. (Apple)',
-    renderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)',
-  },
-} as const;
+    width: number;
+    height: number;
+    deviceScaleFactor: number;
+    isMobile: boolean;
+    hasTouch: boolean;
+    isLandscape: boolean;
+  };
+  locale: string;
+  languages: readonly string[];
+  timezoneId: string;
+  platform: string;
+  /**
+   * When null, leave the real WebGL vendor/renderer alone.
+   * Spoofing Apple Metal on Windows is a classic Akamai tripwire.
+   */
+  webgl: WebGlFingerprint | null;
+};
 
-export function userAgentForChromeVersion(versionLabel: string): string {
+function buildFingerprint(platform: NodeJS.Platform = process.platform): FingerprintProfile {
+  const shared = {
+    locale: 'en-HK',
+    languages: ['en-HK', 'en', 'zh-HK', 'zh'] as const,
+    timezoneId: 'Asia/Hong_Kong',
+  };
+
+  if (platform === 'win32') {
+    return {
+      ...shared,
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      viewport: {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
+        isLandscape: true,
+      },
+      platform: 'Win32',
+      // Real Windows Chrome GPU varies — do not pretend to be Apple Silicon.
+      webgl: null,
+    };
+  }
+
+  if (platform === 'linux') {
+    return {
+      ...shared,
+      userAgent:
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      viewport: {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
+        isLandscape: true,
+      },
+      platform: 'Linux x86_64',
+      webgl: null,
+    };
+  }
+
+  // darwin (and anything else) — match previous Mac desktop profile
+  return {
+    ...shared,
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    viewport: {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 2,
+      isMobile: false,
+      hasTouch: false,
+      isLandscape: true,
+    },
+    platform: 'MacIntel',
+    webgl: {
+      vendor: 'Google Inc. (Apple)',
+      renderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)',
+    },
+  };
+}
+
+export const FINGERPRINT: FingerprintProfile = buildFingerprint();
+
+/** Exported for tests — build a profile for a given Node platform. */
+export function fingerprintForPlatform(platform: NodeJS.Platform): FingerprintProfile {
+  return buildFingerprint(platform);
+}
+
+export function userAgentForChromeVersion(
+  versionLabel: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const m = /(?:Chrome|Chromium)\/(\d[\d.]*)/i.exec(versionLabel);
   const ver = m?.[1] ?? '131.0.0.0';
+  if (platform === 'win32') {
+    return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver} Safari/537.36`;
+  }
+  if (platform === 'linux') {
+    return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver} Safari/537.36`;
+  }
   return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver} Safari/537.36`;
 }
 
-/** Injected before any page script — patches common automation leaks + WebGL. */
-export const FINGERPRINT_INIT_SCRIPT = `(() => {
+/** Injected before any page script — patches common automation leaks (+ WebGL when set). */
+export function buildFingerprintInitScript(fp: FingerprintProfile = FINGERPRINT): string {
+  const webglPatch =
+    fp.webgl == null
+      ? ''
+      : `
+  const vendor = ${JSON.stringify(fp.webgl.vendor)};
+  const renderer = ${JSON.stringify(fp.webgl.renderer)};
+  const patch = (proto) => {
+    if (!proto || proto.__cxPatchedWebgl) return;
+    const getParameter = proto.getParameter;
+    proto.getParameter = function (param) {
+      if (param === 37445) return vendor;
+      if (param === 37446) return renderer;
+      return getParameter.call(this, param);
+    };
+    proto.__cxPatchedWebgl = true;
+  };
+  try { patch(WebGLRenderingContext && WebGLRenderingContext.prototype); } catch {}
+  try { patch(WebGL2RenderingContext && WebGL2RenderingContext.prototype); } catch {}
+`;
+
+  return `(() => {
   try {
     Object.defineProperty(Navigator.prototype, 'webdriver', {
       get: () => undefined,
@@ -37,7 +144,7 @@ export const FINGERPRINT_INIT_SCRIPT = `(() => {
     });
   } catch {}
 
-  const languages = ${JSON.stringify([...FINGERPRINT.languages])};
+  const languages = ${JSON.stringify([...fp.languages])};
   try {
     Object.defineProperty(Navigator.prototype, 'languages', {
       get: () => languages,
@@ -52,7 +159,7 @@ export const FINGERPRINT_INIT_SCRIPT = `(() => {
   } catch {}
   try {
     Object.defineProperty(Navigator.prototype, 'platform', {
-      get: () => ${JSON.stringify(FINGERPRINT.platform)},
+      get: () => ${JSON.stringify(fp.platform)},
       configurable: true,
     });
   } catch {}
@@ -78,19 +185,8 @@ export const FINGERPRINT_INIT_SCRIPT = `(() => {
   if (!w.chrome.loadTimes) {
     w.chrome.loadTimes = () => ({});
   }
+${webglPatch}})()`;
+}
 
-  const vendor = ${JSON.stringify(FINGERPRINT.webgl.vendor)};
-  const renderer = ${JSON.stringify(FINGERPRINT.webgl.renderer)};
-  const patch = (proto) => {
-    if (!proto || proto.__cxPatchedWebgl) return;
-    const getParameter = proto.getParameter;
-    proto.getParameter = function (param) {
-      if (param === 37445) return vendor;
-      if (param === 37446) return renderer;
-      return getParameter.call(this, param);
-    };
-    proto.__cxPatchedWebgl = true;
-  };
-  try { patch(WebGLRenderingContext && WebGLRenderingContext.prototype); } catch {}
-  try { patch(WebGL2RenderingContext && WebGL2RenderingContext.prototype); } catch {}
-})()`;
+/** @deprecated Prefer buildFingerprintInitScript() — kept for call sites that expect a string const. */
+export const FINGERPRINT_INIT_SCRIPT = buildFingerprintInitScript();
