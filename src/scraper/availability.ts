@@ -37,6 +37,33 @@ export function scrapeToResult(scrape: AvailScrape, combo: Combo): CxResult {
   return { found, dates: depDates, cabin, raw };
 }
 
+/**
+ * Calendar cells are only a hint (and often cabin-agnostic / sticky).
+ * Once we have flight cards, `found` must mean at least one non-full outbound slot.
+ */
+export function confirmSeatsFromFlights(result: CxResult): CxResult {
+  if (result.flights === undefined) return result;
+  const open = result.flights.filter(f => f.dir === 'depart' && !f.full);
+  const dates = [...new Set(open.map(f => f.date))].sort();
+  const cabin = result.cabin;
+  if (!dates.length) {
+    return {
+      found: false,
+      dates: [],
+      cabin,
+      raw: result.flights.length ? 'RESULT: NONE (no open seats)' : 'RESULT: NONE (no flight cards)',
+      flights: result.flights,
+    };
+  }
+  return {
+    found: true,
+    dates,
+    cabin,
+    raw: `RESULT: SEATS_FOUND ${dates.join(', ')} ${cabin}`,
+    flights: result.flights,
+  };
+}
+
 /** Keep only non-stop flights when directOnly is on; recompute found/dates from those slots. */
 export function applyDirectOnlyFilter(result: CxResult, directOnly: boolean | undefined): CxResult {
   if (!directOnly) return result;

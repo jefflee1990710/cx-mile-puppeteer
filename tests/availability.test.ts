@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyDirectOnlyFilter,
+  confirmSeatsFromFlights,
   isAwardDateCellOpen,
   isDirectFlightFilterLabel,
   scrapeToResult,
@@ -54,6 +55,59 @@ describe('scrapeToResult', () => {
       ret: [],
     };
     expect(scrapeToResult(scrape, combo)).toMatchObject({ found: false, dates: [], raw: 'RESULT: NONE' });
+  });
+});
+
+describe('confirmSeatsFromFlights', () => {
+  const slot = (over: Partial<FlightSlot> = {}): FlightSlot => ({
+    dir: 'depart',
+    date: '2026-12-23',
+    flightNo: 'CX100',
+    depTime: '10:00',
+    arrTime: '20:00',
+    arrDayOffset: 0,
+    from: 'HKG',
+    to: 'SYD',
+    miles: 110000,
+    stops: 0,
+    full: false,
+    ...over,
+  });
+
+  it('keeps calendar-only results when flights were not scraped', () => {
+    const result: CxResult = {
+      found: true,
+      dates: ['2026-12-23'],
+      cabin: 'First',
+      raw: 'RESULT: SEATS_FOUND 2026-12-23 First',
+    };
+    expect(confirmSeatsFromFlights(result).found).toBe(true);
+  });
+
+  it('rejects calendar hits when flight cards are all full', () => {
+    const result: CxResult = {
+      found: true,
+      dates: ['2026-12-23'],
+      cabin: 'First',
+      raw: 'RESULT: SEATS_FOUND 2026-12-23 First',
+      flights: [slot({ full: true })],
+    };
+    expect(confirmSeatsFromFlights(result)).toMatchObject({
+      found: false,
+      dates: [],
+      raw: 'RESULT: NONE (no open seats)',
+    });
+  });
+
+  it('rejects calendar hits when no flight cards were found', () => {
+    const result: CxResult = {
+      found: true,
+      dates: ['2026-12-23'],
+      cabin: 'First',
+      raw: 'RESULT: SEATS_FOUND 2026-12-23 First',
+      flights: [],
+    };
+    expect(confirmSeatsFromFlights(result).found).toBe(false);
   });
 });
 

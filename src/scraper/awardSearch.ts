@@ -4,6 +4,7 @@ import {
   availableDates,
   checkCxResultsState,
   clickCxDateCell,
+  confirmSeatsFromFlights,
   isCxDirectFlightFilterOn,
   scrapeCxAvailability,
   scrapeCxFlightCards,
@@ -296,15 +297,17 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
         cxlog('award layout: AWAI — reading pageBom bootstrap');
         const { scrape: awaiScrape, flights } = parseAwaiBootstrap(probe, combo);
         const result = scrapeToResult(awaiScrape, combo);
-        const withFlights = result.found ? { ...result, flights } : result;
-        // AWAI bootstrap is not filtered by the checkbox — still apply stops filter.
-        return applyDirectOnlyFilter(withFlights, combo.directOnly);
+        const withFlights = { ...result, flights };
+        // AWAI bootstrap ignores the UI checkbox — filter stops, then require open seats.
+        return confirmSeatsFromFlights(applyDirectOnlyFilter(withFlights, combo.directOnly));
       }
     }
 
     const result = scrapeToResult(scrape, combo);
-    // After the checkbox, calendar availability is already direct-scoped; keep stops filter as backup.
-    if (!result.found) return applyDirectOnlyFilter(result, combo.directOnly);
+    // Calendar "available" alone is not enough (often not cabin-accurate).
+    if (!result.found) {
+      return confirmSeatsFromFlights(applyDirectOnlyFilter({ ...result, flights: [] }, combo.directOnly));
+    }
 
     const flights: FlightSlot[] = [];
     const covered = new Set<string>();
@@ -358,7 +361,8 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
               ? -1
               : 1,
     );
-    return applyDirectOnlyFilter({ ...result, flights }, combo.directOnly);
+    // Prefer flight-card truth over calendar flags (fixes First sold-out false positives).
+    return confirmSeatsFromFlights(applyDirectOnlyFilter({ ...result, flights }, combo.directOnly));
   } catch (e) {
     cxlog('readAwardResults error', String(e));
     return { found: false, dates: [], cabin: '', raw: 'RESULT: NONE (scrape error)' };
