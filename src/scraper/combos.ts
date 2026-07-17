@@ -13,6 +13,7 @@ export function expandCombos(form: CxForm): Combo[] {
           cabin,
           range: { start: date, end: date },
           adults: form.adults,
+          directOnly: !!form.directOnly,
         });
       }
     }

@@ -37,6 +37,30 @@ export function scrapeToResult(scrape: AvailScrape, combo: Combo): CxResult {
   return { found, dates: depDates, cabin, raw };
 }
 
+/** Keep only non-stop flights when directOnly is on; recompute found/dates from those slots. */
+export function applyDirectOnlyFilter(result: CxResult, directOnly: boolean | undefined): CxResult {
+  if (!directOnly) return result;
+  const flights = (result.flights ?? []).filter(f => f.stops === 0);
+  const openDates = [...new Set(flights.filter(f => !f.full).map(f => f.date))].sort();
+  const cabin = result.cabin;
+  if (!openDates.length) {
+    return {
+      found: false,
+      dates: [],
+      cabin,
+      raw: 'RESULT: NONE (no direct)',
+      flights,
+    };
+  }
+  return {
+    found: true,
+    dates: openDates,
+    cabin,
+    raw: `RESULT: SEATS_FOUND ${openDates.join(', ')} ${cabin} (direct)`,
+    flights,
+  };
+}
+
 /** Injected into the page — must be self-contained. */
 export function scrapeCxAvailability(): AvailScrape {
   const ng = (window as unknown as { angular?: { element: (el: Element) => { scope: () => Record<string, unknown> } } })

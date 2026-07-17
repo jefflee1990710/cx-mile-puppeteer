@@ -64,7 +64,15 @@ function forceFingerprint(): boolean {
 
 async function connectViaCdpHttp(httpBase: string): Promise<Browser> {
   const base = httpBase.replace(/\/$/, '');
-  const res = await fetch(`${base}/json/version`);
+  let res: Response;
+  try {
+    res = await fetch(`${base}/json/version`);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `CDP Chrome not reachable at ${base} (${why}). Run ./scripts/launch-chrome-debug.sh, or unset CX_CDP_URL in .env.local to launch Chrome from Puppeteer.`,
+    );
+  }
   if (!res.ok) throw new Error(`CDP /json/version failed HTTP ${res.status}`);
   const json = (await res.json()) as { webSocketDebuggerUrl?: string };
   if (!json.webSocketDebuggerUrl) throw new Error('CDP response missing webSocketDebuggerUrl');

@@ -98,6 +98,16 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
             at: new Date().toISOString(),
           });
         },
+        onSuspiciousBackoff: ms => {
+          const mins = Math.round(ms / 60_000);
+          emitLog(`Suspicious activity detected — waiting ${mins}m then retrying`);
+          broadcast({
+            type: 'status',
+            running: true,
+            message: `Suspicious activity — retry in ${mins}m`,
+            at: new Date().toISOString(),
+          });
+        },
         notify: (combo, result) => notifySeats(combo, result),
         onResult: (combo, result) => {
           broadcast({

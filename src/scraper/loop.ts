@@ -2,17 +2,22 @@ import { expandCombos } from './combos.js';
 import { buildCxDisplay } from './buildUrl.js';
 import { pause } from './human.js';
 import { cxlog } from './log.js';
+import type { CxLoginResult } from './login.js';
 import type { Combo, CxForm, CxResult } from './types.js';
 
-export type OpenSearchOutcome = 'ok' | 'login' | 'error' | 'noflights' | 'rejected';
+export type OpenSearchOutcome = 'ok' | 'login' | 'error' | 'noflights' | 'rejected' | 'suspicious';
+
+/** Back off when CX shows "Suspicious activity detected". */
+export const SUSPICIOUS_RETRY_MS = 30 * 60_000;
 
 export interface LoopDeps {
   openSearch: (combo: Combo) => Promise<OpenSearchOutcome>;
   readResults: (combo: Combo) => Promise<CxResult>;
-  login?: () => Promise<'ok' | 'failed'>;
+  login?: () => Promise<CxLoginResult>;
   /** After OAuth login, wait for in-tab redirect to availability (no second cold goto). */
   settleAfterLogin?: () => Promise<OpenSearchOutcome>;
   onLoginNeeded?: () => void;
+  onSuspiciousBackoff?: (ms: number) => void;
   notify: (combo: Combo, result: CxResult) => void;
   onResult?: (combo: Combo, result: CxResult) => void;
   leaveResults?: (combo: Combo) => Promise<void>;
@@ -38,6 +43,8 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
     cxlog(`loop pass ${pass} begin`);
     deps.onPassStart?.();
     const notified = new Set<string>();
+    let suspiciousHit = false;
+
     for (let i = 0; i < combos.length; i += 1) {
       const combo = combos[i];
       if (deps.isStopped()) {
@@ -47,6 +54,12 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
       const display = buildCxDisplay(combo);
       cxlog(`combo ${i + 1}/${combos.length} run`, display);
       let nav = await deps.openSearch(combo);
+
+      if (nav === 'suspicious') {
+        suspiciousHit = true;
+        break;
+      }
+
       if (nav === 'login') {
         if (!deps.login) {
           cxlog('login wall hit — auto sign-in unavailable (missing creds or disabled)');
@@ -54,8 +67,12 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
           return { foundAny, pausedForLogin: true };
         }
         cxlog('login wall hit — attempting auto sign-in');
-        const loginOk = (await deps.login()) === 'ok';
-        if (!loginOk) {
+        const loginResult = await deps.login();
+        if (loginResult === 'suspicious') {
+          suspiciousHit = true;
+          break;
+        }
+        if (loginResult !== 'ok') {
           cxlog('auto sign-in failed — pausing loop for manual login');
           deps.onLoginNeeded?.();
           return { foundAny, pausedForLogin: true };
@@ -65,8 +82,16 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
           nav = await deps.settleAfterLogin();
           cxlog('post-login settle', nav);
         }
+        if (nav === 'suspicious') {
+          suspiciousHit = true;
+          break;
+        }
         if (nav === 'login' || nav === 'error') {
           nav = await deps.openSearch(combo);
+        }
+        if (nav === 'suspicious') {
+          suspiciousHit = true;
+          break;
         }
         if (nav === 'login') {
           cxlog('auto sign-in failed — pausing loop for manual login');
@@ -101,7 +126,16 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
         await pause.combo();
       }
     }
+
     if (deps.isStopped()) return { foundAny };
+
+    if (suspiciousHit) {
+      cxlog(`suspicious activity — waiting ${SUSPICIOUS_RETRY_MS / 60_000}m before retry`);
+      deps.onSuspiciousBackoff?.(SUSPICIOUS_RETRY_MS);
+      await deps.sleep(SUSPICIOUS_RETRY_MS);
+      continue;
+    }
+
     cxlog(`loop pass ${pass} done; sleeping ${form.intervalMin}m`);
     await pause.page();
     await deps.sleep(form.intervalMin * 60_000);

@@ -7,6 +7,7 @@ import {
   clickPasswordSignIn,
   detectLoginProblem,
   detectLoginStep,
+  detectSuspiciousActivity,
   fillMembershipNumber,
   fillMobileNumber,
   fillPasswordValue,
@@ -165,7 +166,9 @@ async function completeIdentifierThenContinue(
   return waitForPasswordStep(page);
 }
 
-export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' | 'failed'> {
+export type CxLoginResult = 'ok' | 'failed' | 'suspicious';
+
+export async function performCxLogin(page: Page, creds: CxCreds): Promise<CxLoginResult> {
   const method: LoginMethod = creds.loginMethod === 'membership' ? 'membership' : 'mobile';
   const identifier = method === 'membership' ? (creds.membership ?? '').trim() : creds.mobile;
   if (!identifier || !creds.password) {
@@ -195,8 +198,17 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
   await ensureVisibleMouse(page);
   await warmSession(page);
 
+  if ((await pageEval(page, detectSuspiciousActivity)) === true) {
+    cxlog('login: suspicious activity page detected');
+    return 'suspicious';
+  }
+
   let step: CxLoginStep | null = null;
   for (let i = 0; i < 20 && !step; i++) {
+    if ((await pageEval(page, detectSuspiciousActivity)) === true) {
+      cxlog('login: suspicious activity page detected');
+      return 'suspicious';
+    }
     const detected = await pageEval(page, detectLoginStep);
     if (detected === 'mobile' || detected === 'membership' || detected === 'password') {
       step = detected;
@@ -209,6 +221,10 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     await pause.poll(600);
   }
   if (!step) {
+    if ((await pageEval(page, detectSuspiciousActivity)) === true) {
+      cxlog('login: suspicious activity page detected');
+      return 'suspicious';
+    }
     cxlog('login: no mobile/membership/password form detected');
     return 'failed';
   }
@@ -267,6 +283,10 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     // Still on the membership sign-in form.
     if (/sign-in|\/login/i.test(path)) {
       try {
+        if ((await pageEval(page, detectSuspiciousActivity)) === true) {
+          cxlog('login: suspicious activity page detected after submit');
+          return 'suspicious';
+        }
         if ((await pageEval(page, detectLoginProblem)) === true) {
           cxlog('login: CAPTCHA challenge or error banner after submit');
           return 'failed';

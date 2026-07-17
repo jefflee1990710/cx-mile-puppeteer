@@ -15,6 +15,7 @@ const base: CxForm = {
   ],
   cabins: ['bus', 'fir'],
   adults: 1,
+  directOnly: false,
   intervalMin: 30,
 };
 
@@ -28,8 +29,15 @@ describe('expandCombos', () => {
       cabin: 'bus',
       range: { start: '2026-07-01', end: '2026-07-01' },
       adults: 1,
+      directOnly: false,
     });
     expect(combos[3]).toMatchObject({ dest: 'LHR', cabin: 'fir' });
+  });
+
+  it('propagates directOnly onto combos', () => {
+    const combos = expandCombos({ ...base, directOnly: true, cabins: ['eco'], tasks: base.tasks.slice(0, 1) });
+    expect(combos).toHaveLength(1);
+    expect(combos[0].directOnly).toBe(true);
   });
 
   it('expands multiple award dates on one task', () => {

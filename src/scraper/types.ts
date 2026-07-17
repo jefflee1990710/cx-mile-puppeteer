@@ -27,6 +27,8 @@ export interface CxForm {
   tasks: CxTask[];
   cabins: CabinCode[];
   adults: number;
+  /** When true, only treat non-stop (stops === 0) award flights as matches. */
+  directOnly: boolean;
   intervalMin: number;
 }
 
@@ -36,6 +38,7 @@ export interface Combo {
   cabin: CabinCode;
   range: DateRange;
   adults: number;
+  directOnly?: boolean;
 }
 
 export interface FlightSlot {

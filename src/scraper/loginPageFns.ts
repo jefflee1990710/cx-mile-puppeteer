@@ -415,8 +415,42 @@ export function clickPasswordSignIn(): boolean {
   return true;
 }
 
+/** Pure helper (unit-tested) — CX account lock / bot wall on sign-in. */
+export function isSuspiciousActivityText(text: string): boolean {
+  const t = text.replace(/\s+/g, ' ');
+  return (
+    /Suspicious activity detected/i.test(t) ||
+    /unable to proceed as we detected suspicious activity/i.test(t) ||
+    /偵測到可疑活動|檢測到可疑活動|可疑活動/.test(t)
+  );
+}
+
+/** True when CX shows the "Suspicious activity detected" block instead of the login form. */
+export function detectSuspiciousActivity(): boolean {
+  if (!document.body) return false;
+  const root = document.querySelector('.masterSignIn') ?? document.body;
+  const text = (root.textContent || '').replace(/\s+/g, ' ');
+  if (/Suspicious activity detected/i.test(text)) return true;
+  if (/unable to proceed as we detected suspicious activity/i.test(text)) return true;
+  if (/偵測到可疑活動|檢測到可疑活動|可疑活動/.test(text)) return true;
+  return false;
+}
+
 export function detectLoginProblem(): boolean {
   if (!document.body) return false;
+
+  // Prefer the dedicated suspicious check in callers; still treat as a problem here.
+  const rootText = ((document.querySelector('.masterSignIn') ?? document.body).textContent || '').replace(
+    /\s+/g,
+    ' ',
+  );
+  if (
+    /Suspicious activity detected/i.test(rootText) ||
+    /unable to proceed as we detected suspicious activity/i.test(rootText) ||
+    /偵測到可疑活動|檢測到可疑活動|可疑活動/.test(rootText)
+  ) {
+    return true;
+  }
 
   const challenge = Array.from(
     document.querySelectorAll<HTMLIFrameElement>(

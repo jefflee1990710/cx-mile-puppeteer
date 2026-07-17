@@ -38,6 +38,7 @@ function normalizeForm(body: Partial<CxForm>): CxForm {
     tasks,
     cabins: (body.cabins ?? []).filter(c => ['eco', 'pey', 'bus', 'fir'].includes(c)),
     adults: Math.max(1, Number(body.adults) || 1),
+    directOnly: !!body.directOnly,
     intervalMin: Math.max(1, Number(body.intervalMin) || 30),
   };
 }

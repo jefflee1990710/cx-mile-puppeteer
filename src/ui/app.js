@@ -40,6 +40,7 @@ function defaultForm() {
     tasks: [{ id: uid(), origin: 'HKG', dest: 'NRT', dates: [todayIso()] }],
     cabins: ['bus'],
     adults: 1,
+    directOnly: false,
     intervalMin: 30,
   };
 }
@@ -83,6 +84,7 @@ function toHistoryEntry(form, startedAt = Date.now()) {
     })),
     cabins: [...(form.cabins || [])],
     adults: form.adults || 1,
+    directOnly: !!form.directOnly,
     intervalMin: form.intervalMin || 30,
   };
 }
@@ -116,6 +118,7 @@ function sameEnquiry(a, b) {
     a.mobile === b.mobile &&
     a.membership === b.membership &&
     a.adults === b.adults &&
+    !!a.directOnly === !!b.directOnly &&
     a.intervalMin === b.intervalMin &&
     JSON.stringify(a.cabins) === JSON.stringify(b.cabins) &&
     JSON.stringify(
@@ -151,6 +154,7 @@ function entryToForm(entry) {
     // Keep current password (history never stores it).
     password: current.password || '',
     adults: entry.adults || 1,
+    directOnly: !!entry.directOnly,
     intervalMin: entry.intervalMin || 30,
     cabins: entry.cabins?.length ? entry.cabins : ['bus'],
     tasks: (entry.tasks || []).map(t => ({
@@ -484,6 +488,7 @@ function readFormFromDom() {
     tasks,
     cabins: selectedCabins(),
     adults: Number($('#adults').value) || 1,
+    directOnly: $('#directOnly').checked,
     intervalMin: Number($('#intervalMin').value) || 30,
   };
 }
@@ -632,6 +637,7 @@ function applyForm(form) {
   $('#mobile').value = form.mobile || '';
   $('#membership').value = form.membership || '';
   $('#password').value = form.password || '';
+  $('#directOnly').checked = !!form.directOnly;
   $('#adults').value = String(form.adults || 1);
   $('#intervalMin').value = String(form.intervalMin || 30);
   setCabins(form.cabins?.length ? form.cabins : ['bus']);

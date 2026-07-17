@@ -1,5 +1,6 @@
 import type { Page } from 'puppeteer';
 import {
+  applyDirectOnlyFilter,
   availableDates,
   checkCxResultsState,
   clickCxDateCell,
@@ -12,6 +13,7 @@ import { isCdpAttached, isNativeBrowser } from './browser.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
 import { classifyCxBounce, isMidOAuthNavigation } from './cxBounce.js';
 import { pause, warmSession } from './human.js';
+import { detectSuspiciousActivity } from './loginPageFns.js';
 import { cxlog } from './log.js';
 import type { OpenSearchOutcome } from './loop.js';
 import { pageEval } from './pageEval.js';
@@ -62,7 +64,13 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
     }
 
     // Sign-in wall first (path only). Never match oauth strings inside ?goto=.
-    if (/sign-in|\/login/i.test(path)) return 'login';
+    if (/sign-in|\/login/i.test(path)) {
+      if ((await pageEval(page, detectSuspiciousActivity)) === true) {
+        cxlog('settleAwardSearch: suspicious activity page');
+        return 'suspicious';
+      }
+      return 'login';
+    }
 
     const bounce = classifyCxBounce(path, query);
     if (bounce === 'login') {
@@ -228,12 +236,13 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
         cxlog('award layout: AWAI — reading pageBom bootstrap');
         const { scrape: awaiScrape, flights } = parseAwaiBootstrap(probe, combo);
         const result = scrapeToResult(awaiScrape, combo);
-        return result.found ? { ...result, flights } : result;
+        const withFlights = result.found ? { ...result, flights } : result;
+        return applyDirectOnlyFilter(withFlights, combo.directOnly);
       }
     }
 
     const result = scrapeToResult(scrape, combo);
-    if (!result.found) return result;
+    if (!result.found) return applyDirectOnlyFilter(result, combo.directOnly);
 
     const flights: FlightSlot[] = [];
     const covered = new Set<string>();
@@ -287,7 +296,7 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
               ? -1
               : 1,
     );
-    return { ...result, flights };
+    return applyDirectOnlyFilter({ ...result, flights }, combo.directOnly);
   } catch (e) {
     cxlog('readAwardResults error', String(e));
     return { found: false, dates: [], cabin: '', raw: 'RESULT: NONE (scrape error)' };
