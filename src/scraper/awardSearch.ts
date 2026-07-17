@@ -4,21 +4,78 @@ import {
   availableDates,
   checkCxResultsState,
   clickCxDateCell,
+  isCxDirectFlightFilterOn,
   scrapeCxAvailability,
   scrapeCxFlightCards,
   scrapeToResult,
+  setCxDirectFlightFilter,
 } from './availability.js';
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
 import { isCdpAttached, isNativeBrowser } from './browser.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
 import { classifyCxBounce, isMidOAuthNavigation } from './cxBounce.js';
-import { pause, warmSession } from './human.js';
+import { humanClick, pause, warmSession } from './human.js';
 import { detectSuspiciousActivity } from './loginPageFns.js';
 import { cxlog } from './log.js';
 import type { OpenSearchOutcome } from './loop.js';
 import { pageEval } from './pageEval.js';
 import type { Combo, CxResult, FlightSlot } from './types.js';
 import { REDEEM_PAGE_URL } from './types.js';
+
+/** Enable CX results 「直航」checkbox before scraping when directOnly is on. */
+async function ensureDirectFlightCheckbox(page: Page, wantDirect: boolean): Promise<void> {
+  if (!wantDirect) return;
+
+  const already = await pageEval(page, isCxDirectFlightFilterOn);
+  if (already === true) {
+    cxlog('direct filter checkbox already on');
+    await pause.short();
+    return;
+  }
+
+  // Prefer a real cursor click when we can resolve a stable selector (only if currently off).
+  const selector = await page.evaluate(() => {
+    const nodes = [...document.querySelectorAll('label, span, [role="checkbox"], input[type="checkbox"]')];
+    const hit = nodes.find(el => {
+      const t = `${el.textContent || ''} ${el.getAttribute('aria-label') || ''}`.replace(/\s+/g, ' ').trim();
+      return t === '直航' || /^direct(\s+flights?)?$/i.test(t);
+    });
+    if (!hit) return null;
+    if (hit instanceof HTMLInputElement) {
+      return hit.id ? `#${CSS.escape(hit.id)}` : null;
+    }
+    const input =
+      hit.querySelector('input[type="checkbox"]') ?? hit.closest('label')?.querySelector('input[type="checkbox"]');
+    if (input?.id) return `#${CSS.escape(input.id)}`;
+    return null;
+  });
+  if (selector) {
+    await humanClick(page, selector).catch(() => undefined);
+    await pause.short();
+    if ((await pageEval(page, isCxDirectFlightFilterOn)) === true) {
+      cxlog('direct filter checkbox enabled via human click');
+      await pause.page();
+      return;
+    }
+  }
+
+  let status = await pageEval(page, setCxDirectFlightFilter, true);
+  cxlog('direct filter checkbox', status);
+  for (let i = 0; i < 10; i++) {
+    const on = await pageEval(page, isCxDirectFlightFilterOn);
+    if (on === true) {
+      await pause.page();
+      return;
+    }
+    if (status === 'missing') {
+      cxlog('direct filter checkbox missing — will rely on stops filter');
+      return;
+    }
+    await pause.short();
+    status = await pageEval(page, setCxDirectFlightFilter, true);
+  }
+  cxlog('direct filter checkbox not confirmed on after retries', status);
+}
 
 const CABIN_CLASS: Record<string, string> = { eco: 'Y', pey: 'W', bus: 'C', fir: 'F' };
 
@@ -228,6 +285,9 @@ async function waitForResults(page: Page): Promise<'cells' | 'noflights' | 'pend
 export async function readAwardResults(page: Page, combo: Combo): Promise<CxResult> {
   try {
     await pause.short();
+    // Match the CX UI: tick 「直航」 so calendar / flight list are already direct-only.
+    await ensureDirectFlightCheckbox(page, !!combo.directOnly);
+
     const scrape = (await pageEval(page, scrapeCxAvailability)) ?? { depart: [], ret: [] };
 
     if (scrape.depart.length === 0) {
@@ -237,11 +297,13 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
         const { scrape: awaiScrape, flights } = parseAwaiBootstrap(probe, combo);
         const result = scrapeToResult(awaiScrape, combo);
         const withFlights = result.found ? { ...result, flights } : result;
+        // AWAI bootstrap is not filtered by the checkbox — still apply stops filter.
         return applyDirectOnlyFilter(withFlights, combo.directOnly);
       }
     }
 
     const result = scrapeToResult(scrape, combo);
+    // After the checkbox, calendar availability is already direct-scoped; keep stops filter as backup.
     if (!result.found) return applyDirectOnlyFilter(result, combo.directOnly);
 
     const flights: FlightSlot[] = [];

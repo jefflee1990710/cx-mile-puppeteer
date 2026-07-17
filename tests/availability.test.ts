@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyDirectOnlyFilter,
   isAwardDateCellOpen,
+  isDirectFlightFilterLabel,
   scrapeToResult,
   type AvailScrape,
 } from '../src/scraper/availability.js';
@@ -53,6 +54,19 @@ describe('scrapeToResult', () => {
       ret: [],
     };
     expect(scrapeToResult(scrape, combo)).toMatchObject({ found: false, dates: [], raw: 'RESULT: NONE' });
+  });
+});
+
+describe('isDirectFlightFilterLabel', () => {
+  it('matches CX Direct / 直航 checkbox labels', () => {
+    expect(isDirectFlightFilterLabel('直航')).toBe(true);
+    expect(isDirectFlightFilterLabel('Direct')).toBe(true);
+    expect(isDirectFlightFilterLabel('Direct flight')).toBe(true);
+  });
+
+  it('rejects unrelated labels', () => {
+    expect(isDirectFlightFilterLabel('推薦')).toBe(false);
+    expect(isDirectFlightFilterLabel('經濟客艙')).toBe(false);
   });
 });
 
