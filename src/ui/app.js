@@ -357,6 +357,16 @@ function createAirportSelect(opts) {
 
   const byCode = () => new Map(opts.options.map(o => [o.code, o]));
 
+  /** Commit a code into the control, notify parent, and re-render the chip/input. */
+  const commit = code => {
+    const next = (code || '').toUpperCase();
+    opts.value = next;
+    query = '';
+    open = false;
+    opts.onChange(next);
+    render();
+  };
+
   const render = () => {
     box.innerHTML = '';
     const map = byCode();
@@ -367,7 +377,7 @@ function createAirportSelect(opts) {
       chip.innerHTML = `${label} <button type="button" aria-label="Remove ${opts.value}">×</button>`;
       $('button', chip).addEventListener('click', e => {
         e.stopPropagation();
-        opts.onChange('');
+        commit('');
       });
       box.appendChild(chip);
     } else {
@@ -387,7 +397,7 @@ function createAirportSelect(opts) {
         query = e.target.value;
         if (!opts.options.length) {
           const code = query.trim().toUpperCase();
-          if (/^[A-Z]{3}$/.test(code)) opts.onChange(code);
+          if (/^[A-Z]{3}$/.test(code)) commit(code);
           return;
         }
         setOpen(true);
@@ -421,9 +431,7 @@ function createAirportSelect(opts) {
       btn.type = 'button';
       btn.textContent = o.label;
       btn.addEventListener('click', () => {
-        query = '';
-        opts.onChange(o.code);
-        setOpen(false);
+        commit(o.code);
       });
       li.appendChild(btn);
       list.appendChild(li);
@@ -451,6 +459,7 @@ function createAirportSelect(opts) {
 
   root.update = next => {
     Object.assign(opts, next);
+    if ('value' in next) query = '';
     render();
   };
 
