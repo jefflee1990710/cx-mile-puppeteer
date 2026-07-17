@@ -1,10 +1,11 @@
-import type { Page } from 'puppeteer';
+import type { ElementHandle, Page } from 'puppeteer';
 import {
   applyDirectOnlyFilter,
   availableDates,
   checkCxResultsState,
   clickCxDateCell,
   confirmSeatsFromFlights,
+  hasCxDirectFlightFilter,
   isCxDirectFlightFilterOn,
   scrapeCxAvailability,
   scrapeCxFlightCards,
@@ -23,59 +24,119 @@ import { pageEval } from './pageEval.js';
 import type { Combo, CxResult, FlightSlot } from './types.js';
 import { REDEEM_PAGE_URL } from './types.js';
 
-/** Enable CX results 「直航」checkbox before scraping when directOnly is on. */
-async function ensureDirectFlightCheckbox(page: Page, wantDirect: boolean): Promise<void> {
-  if (!wantDirect) return;
+const DIRECT_LABEL_XPATH =
+  "//*[self::label or self::span or self::div or self::button or self::p or self::a]" +
+  "[normalize-space()='直航' or normalize-space()='Direct' or normalize-space()='Direct flight' " +
+  "or normalize-space()='Direct flights']";
+
+/** Cursor-click the Direct / 直航 control via ElementHandle (no id required). */
+async function humanClickDirectFilter(page: Page): Promise<boolean> {
+  const handle = await page.evaluateHandle((xp: string) => {
+    try {
+      const snap = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      const node = snap.singleNodeValue as HTMLElement | null;
+      if (!node) return null;
+      const host = (node.closest('label') as HTMLElement | null) ?? node;
+      return host;
+    } catch {
+      return null;
+    }
+  }, DIRECT_LABEL_XPATH);
+  try {
+    const el = handle.asElement() as ElementHandle<Element> | null;
+    if (!el) return false;
+    return await humanClick(page, el);
+  } finally {
+    await handle.dispose().catch(() => undefined);
+  }
+}
+
+/**
+ * Enable CX results 「直航」checkbox before scraping when directOnly is on.
+ * Returns true when the filter is confirmed on (or already on).
+ * The control often mounts only after the flight list (beside 推薦) — wait + retry.
+ */
+async function ensureDirectFlightCheckbox(
+  page: Page,
+  wantDirect: boolean,
+  opts?: { waitMs?: number; label?: string },
+): Promise<boolean> {
+  if (!wantDirect) return true;
+
+  const waitMs = opts?.waitMs ?? 12_000;
+  const tag = opts?.label ? ` (${opts.label})` : '';
+  const deadline = Date.now() + waitMs;
 
   const already = await pageEval(page, isCxDirectFlightFilterOn);
   if (already === true) {
-    cxlog('direct filter checkbox already on');
-    await pause.short();
-    return;
+    cxlog(`direct filter checkbox already on${tag}`);
+    return true;
   }
 
-  // Prefer a real cursor click when we can resolve a stable selector (only if currently off).
-  const selector = await page.evaluate(() => {
-    const nodes = [...document.querySelectorAll('label, span, [role="checkbox"], input[type="checkbox"]')];
-    const hit = nodes.find(el => {
-      const t = `${el.textContent || ''} ${el.getAttribute('aria-label') || ''}`.replace(/\s+/g, ' ').trim();
-      return t === '直航' || /^direct(\s+flights?)?$/i.test(t);
-    });
-    if (!hit) return null;
-    if (hit instanceof HTMLInputElement) {
-      return hit.id ? `#${CSS.escape(hit.id)}` : null;
-    }
-    const input =
-      hit.querySelector('input[type="checkbox"]') ?? hit.closest('label')?.querySelector('input[type="checkbox"]');
-    if (input?.id) return `#${CSS.escape(input.id)}`;
-    return null;
-  });
-  if (selector) {
-    await humanClick(page, selector).catch(() => undefined);
-    await pause.short();
-    if ((await pageEval(page, isCxDirectFlightFilterOn)) === true) {
-      cxlog('direct filter checkbox enabled via human click');
+  // Wait for the control — calendar view may not have it yet.
+  while (!(await pageEval(page, hasCxDirectFlightFilter)) && Date.now() < deadline) {
+    await pause.poll(500);
+  }
+
+  if (!(await pageEval(page, hasCxDirectFlightFilter))) {
+    cxlog(`direct filter checkbox missing${tag} — will rely on stops filter`);
+    return false;
+  }
+
+  if ((await pageEval(page, isCxDirectFlightFilterOn)) === true) {
+    cxlog(`direct filter checkbox already on${tag}`);
+    return true;
+  }
+
+  const accepted = async (via: string): Promise<boolean> => {
+    const on = await pageEval(page, isCxDirectFlightFilterOn);
+    if (on === true) {
+      cxlog(`direct filter checkbox enabled via ${via}${tag}`);
       await pause.page();
-      return;
+      return true;
     }
+    // Custom controls may not expose checked/aria — treat a successful click as applied.
+    if (on == null) {
+      cxlog(`direct filter checkbox clicked via ${via}${tag} (state unreadable — assuming on)`);
+      await pause.page();
+      return true;
+    }
+    return false;
+  };
+
+  // Prefer a real cursor click on the label / text node.
+  if (await humanClickDirectFilter(page)) {
+    await pause.short();
+    if (await accepted('human click')) return true;
   }
 
   let status = await pageEval(page, setCxDirectFlightFilter, true);
-  cxlog('direct filter checkbox', status);
-  for (let i = 0; i < 10; i++) {
-    const on = await pageEval(page, isCxDirectFlightFilterOn);
-    if (on === true) {
+  cxlog(`direct filter checkbox${tag}`, status);
+  if (status === 'ok' || status === 'unchanged') {
+    if (await accepted(status)) return true;
+  }
+
+  for (let i = 0; i < 12 && Date.now() < deadline + 5_000; i++) {
+    if ((await pageEval(page, isCxDirectFlightFilterOn)) === true) {
       await pause.page();
-      return;
-    }
-    if (status === 'missing') {
-      cxlog('direct filter checkbox missing — will rely on stops filter');
-      return;
+      return true;
     }
     await pause.short();
+    if (i % 3 === 2) await humanClickDirectFilter(page).catch(() => false);
     status = await pageEval(page, setCxDirectFlightFilter, true);
+    if (status === 'ok' || status === 'unchanged') {
+      if (await accepted(status)) return true;
+    }
   }
-  cxlog('direct filter checkbox not confirmed on after retries', status);
+
+  const finalOn = await pageEval(page, isCxDirectFlightFilterOn);
+  if (finalOn === true) return true;
+  if (finalOn == null && (status === 'ok' || status === 'unchanged')) {
+    cxlog(`direct filter checkbox assumed on after retries${tag}`, status);
+    return true;
+  }
+  cxlog(`direct filter checkbox not confirmed on after retries${tag}`, status, finalOn);
+  return false;
 }
 
 const CABIN_CLASS: Record<string, string> = { eco: 'Y', pey: 'W', bus: 'C', fir: 'F' };
@@ -287,7 +348,10 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
   try {
     await pause.short();
     // Match the CX UI: tick 「直航」 so calendar / flight list are already direct-only.
-    await ensureDirectFlightCheckbox(page, !!combo.directOnly);
+    let directOn = await ensureDirectFlightCheckbox(page, !!combo.directOnly, {
+      waitMs: 8_000,
+      label: 'calendar',
+    });
 
     const scrape = (await pageEval(page, scrapeCxAvailability)) ?? { depart: [], ret: [] };
 
@@ -320,8 +384,22 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
       for (const s of slots) covered.add(`${s.dir}|${s.date}`);
     };
 
+    // 「直航」often sits beside 推薦 on the flight list — retry once cards appear.
+    if (combo.directOnly && !directOn) {
+      directOn = await ensureDirectFlightCheckbox(page, true, {
+        waitMs: 10_000,
+        label: 'flight-list',
+      });
+    }
+
     let initial: FlightSlot[] = [];
     for (let i = 0; i < 10; i++) {
+      if (combo.directOnly && !directOn && i === 3) {
+        directOn = await ensureDirectFlightCheckbox(page, true, {
+          waitMs: 6_000,
+          label: 'flight-list-retry',
+        });
+      }
       initial = (await pageEval(page, scrapeCxFlightCards)) ?? [];
       if (initial.length > 0 && initial.every(s => s.miles != null)) break;
       await pause.poll(500);
@@ -338,7 +416,12 @@ export async function readAwardResults(page: Page, combo: Combo): Promise<CxResu
         break;
       }
       await pause.action();
-      const slots = await scrapeFlightsForDate(page, 'depart', date);
+      const slots = await scrapeFlightsForDate(page, 'depart', date, {
+        ensureDirect: !!combo.directOnly && !directOn,
+        onDirectOk: () => {
+          directOn = true;
+        },
+      });
       cxlog(`timeslots depart ${date}: ${slots.length}`, slots[0]);
       if (slots.length === 0) {
         misses += 1;
@@ -373,6 +456,7 @@ async function scrapeFlightsForDate(
   page: Page,
   dir: 'depart' | 'return',
   date: string,
+  opts?: { ensureDirect?: boolean; onDirectOk?: () => void },
 ): Promise<FlightSlot[]> {
   try {
     const clicked = await pageEval(page, clickCxDateCell, dir, date);
@@ -381,6 +465,13 @@ async function scrapeFlightsForDate(
       return [];
     }
     await pause.short();
+    if (opts?.ensureDirect) {
+      const ok = await ensureDirectFlightCheckbox(page, true, {
+        waitMs: 8_000,
+        label: `date-${date}`,
+      });
+      if (ok) opts.onDirectOk?.();
+    }
     let best: FlightSlot[] = [];
     for (let i = 0; i < 16; i++) {
       await pause.poll(500);

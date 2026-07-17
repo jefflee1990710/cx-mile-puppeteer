@@ -106,43 +106,61 @@ export type DirectFilterSetResult = 'ok' | 'unchanged' | 'missing' | 'failed';
 /**
  * Toggle CX award-results 「直航」/ Direct checkbox so availability reflects non-stop only.
  * Self-contained for page.evaluate.
+ *
+ * CX often paints a custom box and hides the real <input> at 0×0 — do not require
+ * the input itself to be "visible"; click the label / short text node instead.
  */
 export function setCxDirectFlightFilter(wantDirect: boolean): DirectFilterSetResult {
-  const isVisible = (el: Element | null | undefined): boolean => {
+  const isShown = (el: Element | null | undefined): boolean => {
     if (!el) return false;
     let cur: Element | null = el;
     while (cur) {
       if (cur.hasAttribute('hidden')) return false;
       if (cur.getAttribute('aria-hidden') === 'true') return false;
       const cls = typeof (cur as HTMLElement).className === 'string' ? (cur as HTMLElement).className : '';
-      if (/\b(hidden|d-none|ng-hide)\b/.test(cls)) return false;
+      if (/\b(d-none|ng-hide)\b/.test(cls)) return false;
       const style = (cur as HTMLElement).style;
       if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
       cur = cur.parentElement;
     }
-    const r = (el as HTMLElement).getBoundingClientRect?.();
-    if (r && (r.width === 0 || r.height === 0)) return false;
     return true;
   };
 
   const labelMatch = (text: string): boolean => {
     const t = text.replace(/\s+/g, ' ').trim();
-    if (!t || t.length > 40) return false;
+    if (!t || t.length > 48) return false;
     return (
       t === '直航' ||
       t === 'Direct' ||
       t === 'Direct flight' ||
       t === 'Direct flights' ||
-      /^direct(\s+flights?)?$/i.test(t)
+      /^direct(\s+flights?)?$/i.test(t) ||
+      /^直航(\s*航班)?$/.test(t)
     );
   };
 
   const press = (el: HTMLElement) => {
+    el.scrollIntoView?.({ block: 'center', inline: 'nearest' });
     el.focus?.();
     const opts: MouseEventInit = { bubbles: true, cancelable: true, view: window, buttons: 1 };
     for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'] as const) {
       el.dispatchEvent(new MouseEvent(type, opts));
     }
+  };
+
+  const forceInput = (input: HTMLInputElement, on: boolean) => {
+    if (input.checked === on) return;
+    try {
+      input.click();
+    } catch {
+      // ignore
+    }
+    if (input.checked === on) return;
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+    desc?.set?.call(input, on);
+    input.dispatchEvent(new Event('click', { bubbles: true }));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
   };
 
   const readOn = (input: HTMLInputElement | null, roleEl: HTMLElement | null): boolean | null => {
@@ -152,6 +170,7 @@ export function setCxDirectFlightFilter(wantDirect: boolean): DirectFilterSetRes
       if (aria === 'true') return true;
       if (aria === 'false') return false;
       if (roleEl.classList.contains('checked') || roleEl.getAttribute('data-state') === 'checked') return true;
+      if (/\b(is-checked|selected|active)\b/i.test(String(roleEl.className))) return true;
     }
     return null;
   };
@@ -160,58 +179,98 @@ export function setCxDirectFlightFilter(wantDirect: boolean): DirectFilterSetRes
   let roleEl: HTMLElement | null = null;
   let clickTarget: HTMLElement | null = null;
 
-  for (const el of Array.from(document.querySelectorAll<HTMLElement>('label, span, div, button, p'))) {
-    if (!isVisible(el)) continue;
-    const own = (el.childNodes.length ? Array.from(el.childNodes) : [])
-      .filter(n => n.nodeType === Node.TEXT_NODE)
-      .map(n => (n.textContent || '').trim())
-      .join(' ');
-    const text = own || (el.textContent || '').replace(/\s+/g, ' ').trim();
-    // Prefer short leaf-ish labels (avoid matching huge containers).
-    if (!labelMatch(text) && !labelMatch((el.getAttribute('aria-label') || '').trim())) continue;
-    if (el.children.length > 6 && text.length > 12) continue;
-
-    const host = (el.closest('label') as HTMLElement | null) ?? el;
-    const forId = host.tagName === 'LABEL' ? host.getAttribute('for') : el.getAttribute('for');
-    input =
-      (forId ? (document.getElementById(forId) as HTMLInputElement | null) : null) ??
-      host.querySelector<HTMLInputElement>('input[type="checkbox"]') ??
-      el.parentElement?.querySelector<HTMLInputElement>('input[type="checkbox"]') ??
-      null;
-    roleEl =
-      host.matches('[role="checkbox"]')
+  // 1) Exact short labels via XPath (most reliable for 「直航」).
+  try {
+    const xp =
+      "//*[self::label or self::span or self::div or self::button or self::p or self::a]" +
+      "[normalize-space()='直航' or normalize-space()='Direct' or normalize-space()='Direct flight' " +
+      "or normalize-space()='Direct flights']";
+    const snap = document.evaluate(xp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+    for (let i = 0; i < snap.snapshotLength; i++) {
+      const el = snap.snapshotItem(i) as HTMLElement | null;
+      if (!el || !isShown(el)) continue;
+      const host = (el.closest('label') as HTMLElement | null) ?? el;
+      const forId = host.getAttribute('for');
+      input =
+        (forId ? (document.getElementById(forId) as HTMLInputElement | null) : null) ??
+        host.querySelector<HTMLInputElement>('input[type="checkbox"]') ??
+        el.parentElement?.querySelector<HTMLInputElement>('input[type="checkbox"]') ??
+        null;
+      roleEl = host.matches('[role="checkbox"]')
         ? host
-        : host.querySelector<HTMLElement>('[role="checkbox"]') ??
-          (el.matches('[role="checkbox"]') ? el : null);
-    clickTarget = host;
-    if (input || roleEl) break;
+        : (host.querySelector<HTMLElement>('[role="checkbox"]') ??
+          (el.matches('[role="checkbox"]') ? el : null));
+      clickTarget = host;
+      break;
+    }
+  } catch {
+    // XPath unavailable — fall through
   }
 
-  if (!input && !roleEl) {
-    for (const cand of Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
-      if (!isVisible(cand)) continue;
-      const wrap = (cand.closest('label') as HTMLElement | null) ?? (cand.parentElement as HTMLElement | null);
-      const t = (wrap?.textContent || cand.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-      if (!/直航|direct(\s+flights?)?/i.test(t) || t.length > 60) continue;
-      input = cand;
-      clickTarget = wrap ?? cand;
+  // 2) Walk short text nodes / aria-labels.
+  if (!clickTarget) {
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('label, span, div, button, p, a'))) {
+      if (!isShown(el)) continue;
+      const own = Array.from(el.childNodes)
+        .filter(n => n.nodeType === Node.TEXT_NODE)
+        .map(n => (n.textContent || '').trim())
+        .join(' ');
+      const text = (own || (el.textContent || '')).replace(/\s+/g, ' ').trim();
+      if (!labelMatch(text) && !labelMatch((el.getAttribute('aria-label') || '').trim())) continue;
+      if (el.children.length > 8 && text.length > 16) continue;
+      const host = (el.closest('label') as HTMLElement | null) ?? el;
+      const forId = host.getAttribute('for');
+      input =
+        (forId ? (document.getElementById(forId) as HTMLInputElement | null) : null) ??
+        host.querySelector<HTMLInputElement>('input[type="checkbox"]') ??
+        el.parentElement?.querySelector<HTMLInputElement>('input[type="checkbox"]') ??
+        null;
+      roleEl = host.matches('[role="checkbox"]')
+        ? host
+        : (host.querySelector<HTMLElement>('[role="checkbox"]') ??
+          (el.matches('[role="checkbox"]') ? el : null));
+      clickTarget = host;
       break;
     }
   }
 
-  if (!input && !roleEl) return 'missing';
+  // 3) Any checkbox whose nearby text mentions Direct / 直航 (input may be 0×0).
+  if (!input && !roleEl) {
+    for (const cand of Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
+      if (!isShown(cand) && !isShown(cand.parentElement)) continue;
+      const wrap = (cand.closest('label') as HTMLElement | null) ?? (cand.parentElement as HTMLElement | null);
+      const t = (wrap?.textContent || cand.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      if (!/直航|direct(\s+flights?)?/i.test(t) || t.length > 80) continue;
+      input = cand;
+      clickTarget = wrap && isShown(wrap) ? wrap : cand;
+      break;
+    }
+  }
+
+  if (!input && !roleEl && !clickTarget) return 'missing';
 
   const currentlyOn = readOn(input, roleEl);
   if (currentlyOn === wantDirect) return 'unchanged';
-  if (currentlyOn == null && !clickTarget) return 'failed';
 
-  const target = (input as HTMLElement | null) ?? roleEl ?? clickTarget;
-  if (!target || !isVisible(target)) return 'failed';
-  press(clickTarget && isVisible(clickTarget) ? clickTarget : target);
+  if (input) {
+    forceInput(input, wantDirect);
+    if (input.checked === wantDirect) return 'ok';
+  }
+
+  const target =
+    (clickTarget && isShown(clickTarget) ? clickTarget : null) ??
+    (roleEl && isShown(roleEl) ? roleEl : null) ??
+    input;
+  if (!target) return 'failed';
+  press(target);
 
   const after = readOn(input, roleEl);
   if (after === wantDirect) return 'ok';
-  // Some custom checkboxes update aria asynchronously — treat click as ok if we attempted.
+  if (input && wantDirect) {
+    forceInput(input, true);
+    if (input.checked) return 'ok';
+  }
+  // Custom controls often update async — treat a successful click as ok.
   if (after == null) return 'ok';
   return 'failed';
 }
@@ -221,14 +280,43 @@ export function isCxDirectFlightFilterOn(): boolean | null {
   for (const cand of Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
     const wrap = (cand.closest('label') as HTMLElement | null) ?? (cand.parentElement as HTMLElement | null);
     const t = (wrap?.textContent || cand.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-    if (/直航|^direct(\s+flights?)?$/i.test(t) && t.length <= 60) return !!cand.checked;
+    if (/直航|direct(\s+flights?)?/i.test(t) && t.length <= 80) return !!cand.checked;
   }
   for (const el of Array.from(document.querySelectorAll<HTMLElement>('[role="checkbox"]'))) {
     const t = (el.textContent || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-    if (!/直航|^direct(\s+flights?)?$/i.test(t) || t.length > 60) continue;
+    if (!/直航|^direct(\s+flights?)?$/i.test(t) || t.length > 80) continue;
     return el.getAttribute('aria-checked') === 'true';
   }
+  // Visible label present but state unknown.
+  try {
+    const xp =
+      "//*[normalize-space()='直航' or normalize-space()='Direct' or normalize-space()='Direct flight']";
+    const snap = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    if (snap.singleNodeValue) return null;
+  } catch {
+    // ignore
+  }
   return null;
+}
+
+/** True when a Direct / 直航 filter control is present in the DOM. */
+export function hasCxDirectFlightFilter(): boolean {
+  try {
+    const xp =
+      "//*[self::label or self::span or self::div or self::button or self::p or self::a]" +
+      "[normalize-space()='直航' or normalize-space()='Direct' or normalize-space()='Direct flight' " +
+      "or normalize-space()='Direct flights']";
+    const snap = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    if (snap.singleNodeValue) return true;
+  } catch {
+    // ignore
+  }
+  for (const cand of Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
+    const wrap = (cand.closest('label') as HTMLElement | null) ?? (cand.parentElement as HTMLElement | null);
+    const t = (wrap?.textContent || cand.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    if (/直航|direct(\s+flights?)?/i.test(t) && t.length <= 80) return true;
+  }
+  return false;
 }
 
 /** Injected into the page — must be self-contained. */
