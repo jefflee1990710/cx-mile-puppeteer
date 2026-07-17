@@ -63,11 +63,14 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
   loopPromise = (async () => {
     try {
       const page = await getPage();
-      const canAutoLogin = !!(form.autoLogin && form.mobile && form.password);
+      const loginMethod = form.loginMethod === 'membership' ? 'membership' : 'mobile';
+      const hasIdentifier =
+        loginMethod === 'membership' ? !!form.membership?.trim() : !!form.mobile;
+      const canAutoLogin = !!(form.autoLogin && hasIdentifier && form.password);
       if (!canAutoLogin) {
         emitLog(
           form.autoLogin
-            ? 'Auto-login on, but mobile/password empty — will pause on sign-in wall'
+            ? `Auto-login on, but ${loginMethod === 'membership' ? 'membership' : 'mobile'}/password empty — will pause on sign-in wall`
             : 'Auto-login off — will pause on sign-in wall',
         );
       }
@@ -79,8 +82,10 @@ export async function startLoop(form: CxForm): Promise<{ ok: true } | { ok: fals
         login: canAutoLogin
           ? () =>
               performCxLogin(page, {
+                loginMethod,
                 countryCode: form.countryCode || '852',
                 mobile: form.mobile,
+                membership: form.membership,
                 password: form.password,
               })
           : undefined,

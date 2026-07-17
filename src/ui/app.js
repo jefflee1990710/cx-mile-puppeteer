@@ -32,8 +32,10 @@ function escapeHtml(s) {
 function defaultForm() {
   return {
     autoLogin: true,
+    loginMethod: 'mobile',
     countryCode: '852',
     mobile: '',
+    membership: '',
     password: '',
     tasks: [{ id: uid(), origin: 'HKG', dest: 'NRT', dates: [todayIso()] }],
     cabins: ['bus'],
@@ -68,8 +70,10 @@ function toHistoryEntry(form, startedAt = Date.now()) {
     id: `${startedAt}-${Math.random().toString(36).slice(2, 8)}`,
     startedAt,
     autoLogin: !!form.autoLogin,
+    loginMethod: form.loginMethod === 'membership' ? 'membership' : 'mobile',
     countryCode: form.countryCode || '852',
     mobile: form.mobile || '',
+    membership: form.membership || '',
     tasks: (form.tasks || []).map(t => ({
       id: t.id || uid(),
       origin: t.origin || '',
@@ -107,8 +111,10 @@ function appendHistory(form) {
 
 function sameEnquiry(a, b) {
   return (
+    a.loginMethod === b.loginMethod &&
     a.countryCode === b.countryCode &&
     a.mobile === b.mobile &&
+    a.membership === b.membership &&
     a.adults === b.adults &&
     a.intervalMin === b.intervalMin &&
     JSON.stringify(a.cabins) === JSON.stringify(b.cabins) &&
@@ -138,8 +144,10 @@ function entryToForm(entry) {
   return {
     ...defaultForm(),
     autoLogin: entry.autoLogin ?? true,
+    loginMethod: entry.loginMethod === 'membership' ? 'membership' : 'mobile',
     countryCode: entry.countryCode || '852',
     mobile: entry.mobile || '',
+    membership: entry.membership || '',
     // Keep current password (history never stores it).
     password: current.password || '',
     adults: entry.adults || 1,
@@ -468,14 +476,32 @@ function readFormFromDom() {
   });
   return {
     autoLogin: $('#autoLogin').checked,
+    loginMethod: currentLoginMethod(),
     countryCode: $('#countryCode').value.trim(),
     mobile: $('#mobile').value.trim(),
+    membership: $('#membership').value.trim(),
     password: $('#password').value,
     tasks,
     cabins: selectedCabins(),
     adults: Number($('#adults').value) || 1,
     intervalMin: Number($('#intervalMin').value) || 30,
   };
+}
+
+function currentLoginMethod() {
+  const pressed = $('.login-method-btn[aria-pressed="true"]');
+  return pressed?.dataset.method === 'membership' ? 'membership' : 'mobile';
+}
+
+function setLoginMethod(method) {
+  const next = method === 'membership' ? 'membership' : 'mobile';
+  $$('.login-method-btn').forEach(btn => {
+    btn.setAttribute('aria-pressed', btn.dataset.method === next ? 'true' : 'false');
+  });
+  const mobileFields = $('#loginMobileFields');
+  const membershipFields = $('#loginMembershipFields');
+  if (mobileFields) mobileFields.hidden = next === 'membership';
+  if (membershipFields) membershipFields.hidden = next !== 'membership';
 }
 
 function chipEl(date) {
@@ -601,8 +627,10 @@ async function renderTasks(tasks) {
 
 function applyForm(form) {
   $('#autoLogin').checked = !!form.autoLogin;
+  setLoginMethod(form.loginMethod === 'membership' ? 'membership' : 'mobile');
   $('#countryCode').value = form.countryCode || '852';
   $('#mobile').value = form.mobile || '';
+  $('#membership').value = form.membership || '';
   $('#password').value = form.password || '';
   $('#adults').value = String(form.adults || 1);
   $('#intervalMin').value = String(form.intervalMin || 30);
@@ -739,6 +767,13 @@ $$('.cabin-chip').forEach(btn => {
   btn.addEventListener('click', () => {
     const pressed = btn.getAttribute('aria-pressed') === 'true';
     btn.setAttribute('aria-pressed', pressed ? 'false' : 'true');
+    persist();
+  });
+});
+
+$$('.login-method-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    setLoginMethod(btn.dataset.method);
     persist();
   });
 });

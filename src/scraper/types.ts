@@ -1,5 +1,8 @@
 export type CabinCode = 'eco' | 'pey' | 'bus' | 'fir';
 
+/** CX sign-in identifier: mobile (default) or membership number. */
+export type LoginMethod = 'mobile' | 'membership';
+
 export interface DateRange {
   start: string;
   end: string;
@@ -15,8 +18,11 @@ export interface CxTask {
 
 export interface CxForm {
   autoLogin: boolean;
+  loginMethod: LoginMethod;
   countryCode: string;
   mobile: string;
+  /** Cathay membership / Asia Miles number (used when loginMethod is membership). */
+  membership: string;
   password: string;
   tasks: CxTask[];
   cabins: CabinCode[];

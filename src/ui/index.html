@@ -61,9 +61,18 @@
           </svg>
           Auto sign-in
         </summary>
-        <div class="login-grid">
+        <div class="login-method" role="group" aria-label="Sign-in method">
+          <button type="button" class="login-method-btn" data-method="mobile" aria-pressed="true">Mobile</button>
+          <button type="button" class="login-method-btn" data-method="membership" aria-pressed="false">Membership no.</button>
+        </div>
+        <div class="login-grid" id="loginMobileFields">
           <input id="countryCode" type="text" value="852" inputmode="numeric" autocomplete="tel-country-code" placeholder="852" aria-label="Country code" />
           <input id="mobile" type="text" inputmode="tel" autocomplete="username" placeholder="Mobile" aria-label="Mobile" />
+        </div>
+        <div class="login-grid login-grid-single" id="loginMembershipFields" hidden>
+          <input id="membership" type="text" inputmode="numeric" autocomplete="username" placeholder="Membership number" aria-label="Membership number" />
+        </div>
+        <div class="login-grid login-grid-single">
           <input id="password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" />
         </div>
         <label class="check">

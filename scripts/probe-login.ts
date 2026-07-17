@@ -1,6 +1,7 @@
 /**
  * One-off login probe. Pass creds via env — never commit secrets.
  *   CX_CC=852 CX_MOBILE=... CX_PASSWORD=... pnpm exec tsx scripts/probe-login.ts
+ *   CX_LOGIN_METHOD=membership CX_MEMBERSHIP=... CX_PASSWORD=... pnpm exec tsx scripts/probe-login.ts
  */
 import puppeteer from 'puppeteer';
 import { performCxLogin } from '../src/scraper/login.js';
@@ -10,15 +11,24 @@ import {
   hasVisiblePasswordField,
 } from '../src/scraper/loginPageFns.js';
 import { installEvalShims, pageEval } from '../src/scraper/pageEval.js';
+import type { LoginMethod } from '../src/scraper/types.js';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 async function main() {
+  const loginMethod: LoginMethod =
+    process.env.CX_LOGIN_METHOD === 'membership' ? 'membership' : 'mobile';
   const countryCode = process.env.CX_CC ?? '852';
   const mobile = process.env.CX_MOBILE ?? '';
+  const membership = process.env.CX_MEMBERSHIP ?? '';
   const password = process.env.CX_PASSWORD ?? '';
-  if (!mobile || !password) {
-    console.error('Set CX_MOBILE and CX_PASSWORD');
+  const identifier = loginMethod === 'membership' ? membership : mobile;
+  if (!identifier || !password) {
+    console.error(
+      loginMethod === 'membership'
+        ? 'Set CX_MEMBERSHIP and CX_PASSWORD'
+        : 'Set CX_MOBILE and CX_PASSWORD',
+    );
     process.exit(1);
   }
 
@@ -81,7 +91,13 @@ async function main() {
   });
   console.log(JSON.stringify(probe, null, 2));
 
-  const result = await performCxLogin(page, { countryCode, mobile, password });
+  const result = await performCxLogin(page, {
+    loginMethod,
+    countryCode,
+    mobile,
+    membership,
+    password,
+  });
   console.log('LOGIN RESULT', result);
   console.log('final url', page.url());
   console.log('hasPw', await pageEval(page, hasVisiblePasswordField));

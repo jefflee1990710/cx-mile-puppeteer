@@ -247,15 +247,41 @@ body {
   opacity: 0.6;
 }
 
+.login-method {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.login-method-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--empty-bg);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.login-method-btn[aria-pressed='true'] {
+  background: var(--card);
+  border-color: var(--accent);
+  color: var(--ink-strong);
+  font-weight: 600;
+}
+
 .login-grid {
   display: grid;
   grid-template-columns: 0.7fr 1.3fr;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
-.login-grid #password {
-  grid-column: 1 / -1;
+.login-grid-single {
+  grid-template-columns: 1fr;
 }
 
 .section {

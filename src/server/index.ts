@@ -27,10 +27,13 @@ function normalizeForm(body: Partial<CxForm>): CxForm {
       dates,
     });
   });
+  const loginMethod = body.loginMethod === 'membership' ? 'membership' : 'mobile';
   return {
     autoLogin: !!body.autoLogin,
+    loginMethod,
     countryCode: String(body.countryCode ?? '852').replace(/\D/g, '') || '852',
     mobile: String(body.mobile ?? '').replace(/\D/g, ''),
+    membership: String(body.membership ?? '').replace(/\s+/g, '').trim(),
     password: String(body.password ?? ''),
     tasks,
     cabins: (body.cabins ?? []).filter(c => ['eco', 'pey', 'bus', 'fir'].includes(c)),

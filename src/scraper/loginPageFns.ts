@@ -1,6 +1,8 @@
 /** Page-injected helpers for CX sign-in (self-contained for page.evaluate). */
 
-export function detectLoginStep(): 'mobile' | 'password' | null {
+export type CxLoginStep = 'mobile' | 'membership' | 'password';
+
+export function detectLoginStep(): CxLoginStep | null {
   const isVisible = (el: Element | null | undefined): boolean => {
     if (!el) return false;
     let cur: Element | null = el;
@@ -18,13 +20,151 @@ export function detectLoginStep(): 'mobile' | 'password' | null {
   const mobile =
     document.querySelector<HTMLInputElement>('input[type="tel"][name="mobile"]') ??
     document.querySelector<HTMLInputElement>('input[type="tel"]');
+  const membership = document.querySelector<HTMLInputElement>('input[name="membership"]');
   const password =
     document.querySelector<HTMLInputElement>('input#Password, input[name="password"][type="password"]') ??
     document.querySelector<HTMLInputElement>('input[type="password"]');
-  if (isVisible(password) && !isVisible(mobile)) return 'password';
+  if (isVisible(password) && !isVisible(mobile) && !isVisible(membership)) return 'password';
+  if (isVisible(membership)) return 'membership';
   if (isVisible(mobile)) return 'mobile';
   if (isVisible(password)) return 'password';
   return null;
+}
+
+/** Switch from mobile/email entry to membership-number entry. Self-contained for page.evaluate. */
+export function switchToMembershipLogin(): boolean {
+  const isVisible = (el: Element | null | undefined): boolean => {
+    if (!el) return false;
+    let cur: Element | null = el;
+    while (cur) {
+      if (cur.hasAttribute('hidden')) return false;
+      if (cur.getAttribute('aria-hidden') === 'true') return false;
+      const cls = typeof (cur as HTMLElement).className === 'string' ? (cur as HTMLElement).className : '';
+      if (/\b(hidden|d-none|ng-hide)\b/.test(cls)) return false;
+      const style = (cur as HTMLElement).style;
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+      cur = cur.parentElement;
+    }
+    return true;
+  };
+  const membership = document.querySelector<HTMLInputElement>('input[name="membership"]');
+  if (isVisible(membership)) return true;
+
+  const press = (el: HTMLElement) => {
+    el.focus();
+    const opts: MouseEventInit = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'] as const) {
+      el.dispatchEvent(new MouseEvent(type, opts));
+    }
+  };
+
+  const candidates: HTMLElement[] = [];
+  const byTealium = document.querySelector<HTMLElement>(
+    '[data-tealium-event-action*="METHOD_CHANGE::MEMBERNUMBER"]',
+  );
+  if (byTealium) candidates.push(byTealium);
+  for (const n of Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], a'))) {
+    const t = (n.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (
+      t === 'sign in with membership number' ||
+      t.includes('membership number') ||
+      t.includes('會員編號') ||
+      t.includes('會員號碼')
+    ) {
+      candidates.push(n);
+    }
+  }
+  const btn = candidates.find(n => isVisible(n) && !(n as HTMLButtonElement).disabled);
+  if (!btn) return false;
+  press(btn);
+  return true;
+}
+
+/** Switch back to mobile-number entry if the page opened on another method. */
+export function switchToMobileLogin(): boolean {
+  const isVisible = (el: Element | null | undefined): boolean => {
+    if (!el) return false;
+    let cur: Element | null = el;
+    while (cur) {
+      if (cur.hasAttribute('hidden')) return false;
+      if (cur.getAttribute('aria-hidden') === 'true') return false;
+      const cls = typeof (cur as HTMLElement).className === 'string' ? (cur as HTMLElement).className : '';
+      if (/\b(hidden|d-none|ng-hide)\b/.test(cls)) return false;
+      const style = (cur as HTMLElement).style;
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+      cur = cur.parentElement;
+    }
+    return true;
+  };
+  const mobile =
+    document.querySelector<HTMLInputElement>('input[type="tel"][name="mobile"]') ??
+    document.querySelector<HTMLInputElement>('input[type="tel"]');
+  if (isVisible(mobile)) return true;
+
+  const press = (el: HTMLElement) => {
+    el.focus();
+    const opts: MouseEventInit = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'] as const) {
+      el.dispatchEvent(new MouseEvent(type, opts));
+    }
+  };
+
+  const candidates: HTMLElement[] = [];
+  const byTealium = document.querySelector<HTMLElement>('[data-tealium-event-action*="METHOD_CHANGE::MOBILE"]');
+  if (byTealium) candidates.push(byTealium);
+  for (const n of Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], a'))) {
+    const t = (n.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (
+      t === 'sign in with mobile number' ||
+      (t.includes('mobile number') && t.includes('sign in')) ||
+      t.includes('手機號碼') ||
+      t.includes('流動電話')
+    ) {
+      candidates.push(n);
+    }
+  }
+  const btn = candidates.find(n => isVisible(n) && !(n as HTMLButtonElement).disabled);
+  if (!btn) return false;
+  press(btn);
+  return true;
+}
+
+export function fillMembershipNumber(membership: string): boolean {
+  const isVisible = (el: Element | null | undefined): boolean => {
+    if (!el) return false;
+    let cur: Element | null = el;
+    while (cur) {
+      if (cur.hasAttribute('hidden')) return false;
+      if (cur.getAttribute('aria-hidden') === 'true') return false;
+      const cls = typeof (cur as HTMLElement).className === 'string' ? (cur as HTMLElement).className : '';
+      if (/\b(hidden|d-none|ng-hide)\b/.test(cls)) return false;
+      const style = (cur as HTMLElement).style;
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+      cur = cur.parentElement;
+    }
+    return true;
+  };
+  const setReactValue = (el: HTMLInputElement, value: string) => {
+    el.focus();
+    const tracker = (el as HTMLInputElement & { _valueTracker?: { setValue: (v: string) => void } })._valueTracker;
+    tracker?.setValue('');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    try {
+      el.dispatchEvent(
+        new InputEvent('input', { bubbles: true, cancelable: true, data: value, inputType: 'insertText' }),
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const input = document.querySelector<HTMLInputElement>('input[name="membership"]');
+  if (!input || !isVisible(input)) return false;
+  setReactValue(input, membership);
+  return input.value === membership || input.value.replace(/\s+/g, '') === membership.replace(/\s+/g, '');
 }
 
 export function fillMobileNumber(countryCode: string, mobile: string): boolean {
@@ -104,8 +244,15 @@ export function clickMobileContinue(): boolean {
   };
 
   const candidates: HTMLElement[] = [];
-  const byTealium = document.querySelector<HTMLElement>('[data-tealium-event-action*="CONTINUE_BTN"]');
-  if (byTealium) candidates.push(byTealium);
+  // Prefer the active method's Continue (MOBILE / MEMBERNUMBER / EMAIL).
+  for (const sel of [
+    '[data-tealium-event-action*="CONTINUE_BTN::MEMBERNUMBER"]',
+    '[data-tealium-event-action*="CONTINUE_BTN::MOBILE"]',
+    '[data-tealium-event-action*="CONTINUE_BTN"]',
+  ]) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el) candidates.push(el);
+  }
   const byClass = document.querySelector<HTMLElement>('button.masterSignIn__submitBtn');
   if (byClass) candidates.push(byClass);
   for (const n of Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]'))) {

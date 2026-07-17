@@ -4,8 +4,10 @@ import { makeCxTask, type CxForm } from '../src/scraper/types.js';
 
 const base: CxForm = {
   autoLogin: true,
+  loginMethod: 'mobile',
   countryCode: '852',
   mobile: '66849591',
+  membership: '',
   password: 'x',
   tasks: [
     makeCxTask({ id: 'a', origin: 'HKG', dest: 'NRT', range: { start: '2026-07-01', end: '2026-07-01' }, dates: ['2026-07-01'] }),

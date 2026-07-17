@@ -7,22 +7,32 @@ import {
   clickPasswordSignIn,
   detectLoginProblem,
   detectLoginStep,
+  fillMembershipNumber,
   fillMobileNumber,
   fillPasswordValue,
   hasVisiblePasswordField,
+  switchToMembershipLogin,
+  switchToMobileLogin,
+  type CxLoginStep,
 } from './loginPageFns.js';
 import { pageEval } from './pageEval.js';
+import type { LoginMethod } from './types.js';
 
 export interface CxCreds {
+  loginMethod?: LoginMethod;
   countryCode: string;
   mobile: string;
+  membership?: string;
   password: string;
 }
 
 const MOBILE_SEL = 'input[type="tel"][name="mobile"], input[type="tel"]';
+const MEMBERSHIP_SEL = 'input[name="membership"]';
 const PASSWORD_SEL = 'input#Password, input[name="password"][type="password"], input[type="password"]';
 const CONTINUE_SEL =
   '[data-tealium-event-action*="CONTINUE_BTN"], button.masterSignIn__submitBtn';
+const MEMBERSHIP_METHOD_SEL = '[data-tealium-event-action*="METHOD_CHANGE::MEMBERNUMBER"]';
+const MOBILE_METHOD_SEL = '[data-tealium-event-action*="METHOD_CHANGE::MOBILE"]';
 const SIGNIN_SEL = '[data-tealium-event-action*="SIGN_IN_WITH_PASSWORD_BTN"]';
 
 async function readInputValue(page: Page, selector: string): Promise<string> {
@@ -40,6 +50,16 @@ async function fillMobileHuman(page: Page, countryCode: string, mobile: string):
   return (await pageEval(page, fillMobileNumber, countryCode, mobile)) === true;
 }
 
+async function fillMembershipHuman(page: Page, membership: string): Promise<boolean> {
+  const typed = await humanTypeInto(page, MEMBERSHIP_SEL, membership);
+  if (typed) {
+    const v = await readInputValue(page, MEMBERSHIP_SEL);
+    if (v.replace(/\s+/g, '') === membership.replace(/\s+/g, '')) return true;
+  }
+  cxlog('login: human membership type incomplete — falling back to evaluate fill');
+  return (await pageEval(page, fillMembershipNumber, membership)) === true;
+}
+
 async function fillPasswordHuman(page: Page, password: string): Promise<boolean> {
   const typed = await humanTypeInto(page, PASSWORD_SEL, password);
   if (typed) {
@@ -53,6 +73,42 @@ async function fillPasswordHuman(page: Page, password: string): Promise<boolean>
 async function clickContinueHuman(page: Page): Promise<boolean> {
   if (await humanClick(page, CONTINUE_SEL)) return true;
   return (await pageEval(page, clickMobileContinue)) === true;
+}
+
+async function switchToMembershipHuman(page: Page): Promise<boolean> {
+  if (await page.$(MEMBERSHIP_METHOD_SEL)) {
+    if (await humanClick(page, MEMBERSHIP_METHOD_SEL)) return true;
+  }
+  return (await pageEval(page, switchToMembershipLogin)) === true;
+}
+
+async function switchToMobileHuman(page: Page): Promise<boolean> {
+  if (await page.$(MOBILE_METHOD_SEL)) {
+    if (await humanClick(page, MOBILE_METHOD_SEL)) return true;
+  }
+  return (await pageEval(page, switchToMobileLogin)) === true;
+}
+
+async function ensureLoginMethod(page: Page, method: LoginMethod, step: CxLoginStep): Promise<boolean> {
+  const want: CxLoginStep = method === 'membership' ? 'membership' : 'mobile';
+  if (step === want) return true;
+
+  cxlog(`login: switching to ${want} method (was ${step})`);
+  let switched = false;
+  for (let i = 0; i < 8 && !switched; i++) {
+    switched = method === 'membership' ? await switchToMembershipHuman(page) : await switchToMobileHuman(page);
+    if (!switched) await pause.short();
+  }
+  if (!switched) {
+    cxlog(`login: could not switch to ${want} login`);
+    return false;
+  }
+  for (let i = 0; i < 20; i++) {
+    await pause.poll(400);
+    if ((await pageEval(page, detectLoginStep)) === want) return true;
+  }
+  cxlog(`login: ${want} field never appeared after method switch`);
+  return false;
 }
 
 async function clickSignInHuman(page: Page): Promise<boolean> {
@@ -69,8 +125,50 @@ async function clickSignInHuman(page: Page): Promise<boolean> {
   return (await pageEval(page, clickPasswordSignIn)) === true;
 }
 
+async function waitForPasswordStep(page: Page): Promise<boolean> {
+  for (let i = 0; i < 30; i++) {
+    await pause.poll(700);
+    if ((await pageEval(page, detectLoginProblem)) === true) {
+      cxlog('login: real CAPTCHA challenge or error banner at step 1');
+      return false;
+    }
+    if ((await pageEval(page, hasVisiblePasswordField)) === true) return true;
+  }
+  cxlog('login: password field never appeared');
+  return false;
+}
+
+async function completeIdentifierThenContinue(
+  page: Page,
+  fill: () => Promise<boolean>,
+  label: string,
+): Promise<boolean> {
+  await pause.short();
+  const filled = await fill();
+  if (!filled) {
+    cxlog(`login: could not fill the ${label}`);
+    return false;
+  }
+  await pause.action();
+
+  let continued = false;
+  for (let i = 0; i < 8 && !continued; i++) {
+    continued = await clickContinueHuman(page);
+    if (!continued) await pause.short();
+  }
+  if (!continued) {
+    cxlog(`login: could not click Continue after filling ${label}`);
+    return false;
+  }
+
+  await pause.page();
+  return waitForPasswordStep(page);
+}
+
 export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' | 'failed'> {
-  if (!creds.mobile || !creds.password) {
+  const method: LoginMethod = creds.loginMethod === 'membership' ? 'membership' : 'mobile';
+  const identifier = method === 'membership' ? (creds.membership ?? '').trim() : creds.mobile;
+  if (!identifier || !creds.password) {
     cxlog('login: missing credentials');
     return 'failed';
   }
@@ -97,10 +195,10 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
   await ensureVisibleMouse(page);
   await warmSession(page);
 
-  let step: 'mobile' | 'password' | null = null;
+  let step: CxLoginStep | null = null;
   for (let i = 0; i < 20 && !step; i++) {
     const detected = await pageEval(page, detectLoginStep);
-    if (detected === 'mobile' || detected === 'password') {
+    if (detected === 'mobile' || detected === 'membership' || detected === 'password') {
       step = detected;
       break;
     }
@@ -111,44 +209,25 @@ export async function performCxLogin(page: Page, creds: CxCreds): Promise<'ok' |
     await pause.poll(600);
   }
   if (!step) {
-    cxlog('login: no mobile/password form detected');
+    cxlog('login: no mobile/membership/password form detected');
     return 'failed';
   }
 
-  if (step === 'mobile') {
-    await pause.short();
-    const filled = await fillMobileHuman(page, creds.countryCode, creds.mobile);
-    if (!filled) {
-      cxlog('login: could not fill the mobile number');
-      return 'failed';
-    }
-    await pause.action();
-
-    let continued = false;
-    for (let i = 0; i < 8 && !continued; i++) {
-      continued = await clickContinueHuman(page);
-      if (!continued) await pause.short();
-    }
-    if (!continued) {
-      cxlog('login: could not click Continue after filling mobile');
-      return 'failed';
-    }
-
-    await pause.page();
-
-    let hasPw = false;
-    for (let i = 0; i < 30 && !hasPw; i++) {
-      await pause.poll(700);
-      if ((await pageEval(page, detectLoginProblem)) === true) {
-        cxlog('login: real CAPTCHA challenge or error banner at step 1');
-        return 'failed';
-      }
-      hasPw = (await pageEval(page, hasVisiblePasswordField)) === true;
-    }
-    if (!hasPw) {
-      cxlog('login: password field never appeared');
-      return 'failed';
-    }
+  if (step !== 'password') {
+    if (!(await ensureLoginMethod(page, method, step))) return 'failed';
+    const ok =
+      method === 'membership'
+        ? await completeIdentifierThenContinue(
+            page,
+            () => fillMembershipHuman(page, identifier),
+            'membership number',
+          )
+        : await completeIdentifierThenContinue(
+            page,
+            () => fillMobileHuman(page, creds.countryCode, identifier),
+            'mobile number',
+          );
+    if (!ok) return 'failed';
   }
 
   await pause.short();
