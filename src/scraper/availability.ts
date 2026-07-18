@@ -452,7 +452,13 @@ export function scrapeCxFlightCards(): FlightSlot[] {
     const sc = ng.element(card).scope();
     if (!sc) continue;
     const f = sc.flight as
-      | { startDate?: unknown; endDate?: unknown; segments?: Array<Record<string, unknown>> }
+      | {
+          startDate?: unknown;
+          endDate?: unknown;
+          segments?: Array<Record<string, unknown>>;
+          isWaitlisted?: unknown;
+          disabled?: unknown;
+        }
       | undefined;
     const segs = (f?.segments ?? []).filter(s => !s.bDummy);
     if (!f || segs.length === 0) continue;
@@ -460,6 +466,12 @@ export function scrapeCxFlightCards(): FlightSlot[] {
     const last = segs[segs.length - 1];
     const date = toISO(f.startDate);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const host =
+      (card.closest('.row-flight-card') as HTMLElement | null) ??
+      (card.parentElement as HTMLElement | null) ??
+      (card as HTMLElement);
+    const classFull = /\bflight-full\b/.test(host.className || '') || /\bflight-card-waitlist\b/.test(host.className || '');
+    const noticeFull = !!host.querySelector?.('.flight-full-msg');
     out.push({
       dir: sc.travelType === 'DEP' ? 'depart' : 'return',
       date,
@@ -473,7 +485,14 @@ export function scrapeCxFlightCards(): FlightSlot[] {
       to: String(last.endAirportCode ?? ''),
       miles: typeof sc.milesInfo === 'number' ? sc.milesInfo : null,
       stops: segs.length - 1,
-      full: !!sc.isFull,
+      // Waitlist / 「未有提供兌換座位」 must count as full — not only scope.isFull.
+      full:
+        !!sc.isFull ||
+        !!sc.cantEvenWaitlist ||
+        !!f.isWaitlisted ||
+        !!f.disabled ||
+        classFull ||
+        noticeFull,
     });
   }
   return out;
