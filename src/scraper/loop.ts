@@ -1,14 +1,26 @@
 import { expandCombos } from './combos.js';
 import { buildCxDisplay } from './buildUrl.js';
+import { isNavigationNetError } from './chromeNetError.js';
 import { pause } from './human.js';
 import { cxlog } from './log.js';
 import type { CxLoginResult } from './login.js';
 import type { Combo, CxForm, CxResult } from './types.js';
 
-export type OpenSearchOutcome = 'ok' | 'login' | 'error' | 'noflights' | 'rejected' | 'suspicious';
+export type OpenSearchOutcome =
+  | 'ok'
+  | 'login'
+  | 'error'
+  | 'noflights'
+  | 'rejected'
+  | 'suspicious'
+  /** Chrome net error (ERR_HTTP2_PROTOCOL_ERROR) or Akamai Access Denied — restart CDP Chrome. */
+  | 'blocked';
 
 /** Back off when CX shows "Suspicious activity detected". */
 export const SUSPICIOUS_RETRY_MS = 30 * 60_000;
+
+/** Max wipe+relaunch attempts for edge blocks within a single pass. */
+export const MAX_BLOCK_RESTARTS_PER_PASS = 2;
 
 export interface LoopDeps {
   openSearch: (combo: Combo) => Promise<OpenSearchOutcome>;
@@ -18,6 +30,9 @@ export interface LoopDeps {
   settleAfterLogin?: () => Promise<OpenSearchOutcome>;
   onLoginNeeded?: () => void;
   onSuspiciousBackoff?: (ms: number) => void;
+  /** Close Chrome, wipe debug profile, relaunch via CDP, reconnect. */
+  restartChrome?: () => Promise<void>;
+  onBlockedRestart?: (attempt: number) => void;
   notify: (combo: Combo, result: CxResult) => void;
   onResult?: (combo: Combo, result: CxResult) => void;
   leaveResults?: (combo: Combo) => Promise<void>;
@@ -29,6 +44,49 @@ export interface LoopDeps {
 export interface LoopOutcome {
   foundAny: boolean;
   pausedForLogin?: boolean;
+}
+
+async function recoverFromBlock(
+  deps: LoopDeps,
+  attempt: number,
+): Promise<boolean> {
+  if (!deps.restartChrome) {
+    cxlog('blocked — no restartChrome handler; cannot wipe/relaunch');
+    return false;
+  }
+  cxlog(`blocked — wiping Chrome debug profile and relaunching CDP (${attempt}/${MAX_BLOCK_RESTARTS_PER_PASS})`);
+  deps.onBlockedRestart?.(attempt);
+  await deps.restartChrome();
+  return true;
+}
+
+/** Map thrown Puppeteer net::ERR_* to blocked so the loop can wipe/relaunch. */
+async function openSearchGuarded(
+  deps: LoopDeps,
+  combo: Combo,
+): Promise<OpenSearchOutcome> {
+  try {
+    return await deps.openSearch(combo);
+  } catch (e) {
+    if (isNavigationNetError(e)) {
+      cxlog('openSearch threw net error — treating as blocked', String(e));
+      return 'blocked';
+    }
+    throw e;
+  }
+}
+
+async function settleGuarded(deps: LoopDeps): Promise<OpenSearchOutcome | undefined> {
+  if (!deps.settleAfterLogin) return undefined;
+  try {
+    return await deps.settleAfterLogin();
+  } catch (e) {
+    if (isNavigationNetError(e)) {
+      cxlog('settleAfterLogin threw net error — treating as blocked', String(e));
+      return 'blocked';
+    }
+    throw e;
+  }
 }
 
 export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopOutcome> {
@@ -44,6 +102,7 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
     deps.onPassStart?.();
     const notified = new Set<string>();
     let suspiciousHit = false;
+    let blockRestarts = 0;
 
     for (let i = 0; i < combos.length; i += 1) {
       const combo = combos[i];
@@ -53,7 +112,14 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
       }
       const display = buildCxDisplay(combo);
       cxlog(`combo ${i + 1}/${combos.length} run`, display);
-      let nav = await deps.openSearch(combo);
+      let nav = await openSearchGuarded(deps, combo);
+
+      while (nav === 'blocked' && blockRestarts < MAX_BLOCK_RESTARTS_PER_PASS && !deps.isStopped()) {
+        blockRestarts += 1;
+        const ok = await recoverFromBlock(deps, blockRestarts);
+        if (!ok) break;
+        nav = await openSearchGuarded(deps, combo);
+      }
 
       if (nav === 'suspicious') {
         suspiciousHit = true;
@@ -79,15 +145,27 @@ export async function runSearchLoop(form: CxForm, deps: LoopDeps): Promise<LoopO
         }
         // Prefer settling the OAuth return tab (extension path) before cold re-navigation.
         if (deps.settleAfterLogin) {
-          nav = await deps.settleAfterLogin();
+          nav = (await settleGuarded(deps)) ?? nav;
           cxlog('post-login settle', nav);
+        }
+        while (nav === 'blocked' && blockRestarts < MAX_BLOCK_RESTARTS_PER_PASS && !deps.isStopped()) {
+          blockRestarts += 1;
+          const ok = await recoverFromBlock(deps, blockRestarts);
+          if (!ok) break;
+          nav = await openSearchGuarded(deps, combo);
         }
         if (nav === 'suspicious') {
           suspiciousHit = true;
           break;
         }
-        if (nav === 'login' || nav === 'error') {
-          nav = await deps.openSearch(combo);
+        if (nav === 'login' || nav === 'error' || nav === 'blocked') {
+          nav = await openSearchGuarded(deps, combo);
+        }
+        while (nav === 'blocked' && blockRestarts < MAX_BLOCK_RESTARTS_PER_PASS && !deps.isStopped()) {
+          blockRestarts += 1;
+          const ok = await recoverFromBlock(deps, blockRestarts);
+          if (!ok) break;
+          nav = await openSearchGuarded(deps, combo);
         }
         if (nav === 'suspicious') {
           suspiciousHit = true;

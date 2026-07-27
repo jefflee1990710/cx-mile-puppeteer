@@ -15,6 +15,7 @@ import {
 import { grabAwaiGlobals, parseAwaiBootstrap } from './awai.js';
 import { isCdpAttached, isNativeBrowser } from './browser.js';
 import { buildAwardSearchUrl } from './buildUrl.js';
+import { isNavigationNetError, looksLikeChromeNetError } from './chromeNetError.js';
 import { classifyCxBounce, isMidOAuthNavigation } from './cxBounce.js';
 import { humanClick, pause, warmSession } from './human.js';
 import { detectSuspiciousActivity } from './loginPageFns.js';
@@ -161,6 +162,10 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await pause.poll(1000);
+    if (await isChromeNetErrorPage(page)) {
+      cxlog('settleAwardSearch: Chrome net error (e.g. ERR_HTTP2_PROTOCOL_ERROR)', page.url());
+      return 'blocked';
+    }
     if (await isAkamaiDenied(page)) {
       cxlog('settleAwardSearch: Akamai Access Denied', page.url());
       if (!isCdpAttached()) {
@@ -168,7 +173,8 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
           'hint: set CX_CDP_URL after .\\scripts\\launch-chrome-debug.ps1 (or ./scripts/launch-chrome-debug.sh); wipe chrome-profile if cookies are burned',
         );
       }
-      return 'error';
+      // Same remediation as HTTP2 drop — burn profile and relaunch CDP Chrome.
+      return 'blocked';
     }
     let path = '';
     let query = '';
@@ -218,6 +224,18 @@ export async function settleAwardSearch(page: Page, timeoutMs = 90_000): Promise
 }
 
 export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSearchOutcome> {
+  try {
+    return await openAwardSearchInner(page, combo);
+  } catch (e) {
+    if (isNavigationNetError(e)) {
+      cxlog('openAwardSearch: net error (outer)', String(e));
+      return 'blocked';
+    }
+    throw e;
+  }
+}
+
+async function openAwardSearchInner(page: Page, combo: Combo): Promise<OpenSearchOutcome> {
   const url = buildAwardSearchUrl(combo);
   cxlog('openAwardSearch navigate', url);
   await pause.combo();
@@ -232,8 +250,20 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
   // No redeem warm, form fill, ghost cursor, or fingerprint (those trip Akamai).
   if (isCdpAttached()) {
     cxlog('openAwardSearch: CDP — tabs.update-style goto (extension path)');
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+    } catch (e) {
+      if (isNavigationNetError(e)) {
+        cxlog('openAwardSearch: CDP navigation net error', String(e));
+        return 'blocked';
+      }
+      throw e;
+    }
     await pause.page();
+    if (await isChromeNetErrorPage(page)) {
+      cxlog('openAwardSearch: Chrome net error page after CDP goto', page.url());
+      return 'blocked';
+    }
     return settleAwardSearch(page);
   }
 
@@ -249,6 +279,10 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
     // Mouse/scroll warming injects DOM observers — skip on native/system Chrome.
     if (!isNativeBrowser()) await warmSession(page);
   } catch (e) {
+    if (isNavigationNetError(e)) {
+      cxlog('openAwardSearch: redeem warm net error', String(e));
+      return 'blocked';
+    }
     cxlog('openAwardSearch: redeem warm failed', String(e));
   }
 
@@ -259,6 +293,10 @@ export async function openAwardSearch(page: Page, combo: Combo): Promise<OpenSea
     await page.evaluate(`(u => { window.location.assign(u); })(${JSON.stringify(url)})`);
   }
   await pause.page();
+  if (await isChromeNetErrorPage(page)) {
+    cxlog('openAwardSearch: Chrome net error page after submit', page.url());
+    return 'blocked';
+  }
   return settleAwardSearch(page);
 }
 
@@ -326,6 +364,20 @@ async function isAkamaiDenied(page: Page): Promise<boolean> {
       `(() => ((document.title || '') + ' ' + (document.body?.innerText || '')).slice(0, 500))()`,
     );
     return /Access Denied|errors\.edgesuite\.net|You don't have permission to access/i.test(String(text));
+  } catch {
+    return false;
+  }
+}
+
+async function isChromeNetErrorPage(page: Page): Promise<boolean> {
+  try {
+    const probe = (await page.evaluate(`(() => ({
+      url: location.href || '',
+      title: document.title || '',
+      text: (document.body?.innerText || '').slice(0, 2000),
+      code: document.querySelector('.error-code')?.textContent || '',
+    }))()`)) as { url: string; title: string; text: string; code: string };
+    return looksLikeChromeNetError(probe);
   } catch {
     return false;
   }
